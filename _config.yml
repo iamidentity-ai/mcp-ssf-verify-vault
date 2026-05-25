@@ -2,8 +2,10 @@
 # Pages serves the repo's markdown via Jekyll: README.md becomes the site
 # landing page; docs/*.md files become /docs/<chapter>.html.
 
-title: "Securing Your MCP Server End-to-End"
-description: "IBM Verify + HashiCorp Vault — a 30-minute hands-on cookbook that lands a working MCP server on your laptop with per-call policy authorization, step-up MFA where the policy demands it, and a 5-minute PostgreSQL credential per tool call. No AWS account required."
+title: "Securing Your MCP Server with Shared Signals"
+description: "IBM Verify + HashiCorp Vault + IBM Antenna v26.03 — a hands-on cookbook"
+url: "https://iamidentity-ai.github.io/mcp-ssf-verify-vault"
+repository: "iamidentity-ai/mcp-ssf-verify-vault"
 theme: jekyll-theme-cayman
 
 # Skip the noise — these are build artifacts and contributor scripts,
