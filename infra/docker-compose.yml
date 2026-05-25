@@ -7,6 +7,7 @@ services:
     image: postgres:16-alpine
     container_name: vva-postgres
     restart: unless-stopped
+    networks: [mcpssf]
     environment:
       POSTGRES_USER: ${POSTGRES_ADMIN_USER:-vva_admin}
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-vva_admin_local_dev_only}
@@ -27,6 +28,7 @@ services:
     image: hashicorp/vault:1.18
     container_name: vva-vault
     restart: unless-stopped
+    networks: [mcpssf]
     cap_add:
       - IPC_LOCK
     environment:
@@ -41,6 +43,63 @@ services:
       - -dev-plugin-dir=/vault/plugins
     volumes:
       - ./vault/plugins:/vault/plugins:ro
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # IBM Verify Antenna v26.03 split-image deployment
+  # ────────────────────────────────────────────────────────────────────────────
+  # Transmitter — ingests CAEP events from the MCP server (HTTPS) on its
+  # /sources/<id>/events endpoint, signs them as SETs, and exposes the SSF
+  # poll endpoint that the receiver subscribes to.
+  antenna-transmitter:
+    image: icr.io/ibm-verify/ibm-verify-antenna-transmitter:26.03.0
+    container_name: vva-antenna-transmitter
+    hostname: antenna-transmitter
+    restart: unless-stopped
+    networks: [mcpssf]
+    # Bind to all interfaces — the MCP server (on the host) needs to POST
+    # events to https://localhost:${ANTENNA_TRANSMITTER_PORT}/sources/mcp/events.
+    ports:
+      - "${ANTENNA_TRANSMITTER_PORT:-9044}:9044"
+    # Mount path is /configs (NOT /var/antenna/config — the IBM
+    # verify-antenna-recipes repo's docker-compose has a verified bug; the
+    # binary unconditionally reads from /configs). See /tmp/v26.03-notes.md §6.
+    volumes:
+      - ./antenna/deploying/transmitter/configs:/configs
+      - ./antenna/db:/db
+
+  # Receiver — polls SETs from the transmitter and runs the configured
+  # action_rules (session_revoked.js calls IBM Verify's DELETE /v1.0/auth/sessions
+  # admin API to revoke the user's sessions across every federated app).
+  antenna-receiver:
+    image: icr.io/ibm-verify/ibm-verify-antenna-receiver:26.03.0
+    container_name: vva-antenna-receiver
+    hostname: antenna-receiver
+    restart: unless-stopped
+    networks: [mcpssf]
+    # Bind ONLY to localhost. The v26.03 receiver mgmt endpoint
+    # (POST /mgmt/v2.0/receivers/config) ships UNAUTHENTICATED in the shipped
+    # recipes — exposing it publicly would let anyone register a stream
+    # pointing at our transmitter. Localhost-only is the safe default; for
+    # production, front it with mTLS / a reverse-proxy auth gate.
+    ports:
+      - "127.0.0.1:${ANTENNA_RECEIVER_PORT:-9043}:9043"
+    volumes:
+      - ./antenna/deploying/receiver/configs:/configs
+      - ./antenna/db:/db
+    environment:
+      # Trust the transmitter's self-signed cert when the receiver hits
+      # https://antenna-transmitter:9044/.well-known/ssf-configuration.
+      # generate-certs.sh puts the chain at deploying/receiver/configs/keys/ca-bundle.pem.
+      - SSL_CERT_FILE=/configs/keys/ca-bundle.pem
+    depends_on:
+      - antenna-transmitter
+
+networks:
+  # Shared bridge so the receiver can reach the transmitter by container name
+  # (https://antenna-transmitter:9044/...). Postgres + Vault also attach so
+  # all services share one network namespace.
+  mcpssf:
+    driver: bridge
 
 volumes:
   postgres-data:

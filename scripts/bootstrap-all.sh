@@ -76,15 +76,35 @@ fi
 echo "[bootstrap-all] Bootstrapping Vault (plugin + role + policy)..."
 bash "${REPO_ROOT}/infra/vault/bootstrap-vault.sh"
 
+# ── 6. Antenna SSF bring-up (conditional on SSF creds being in Vault) ────────
+# infra/verify/bootstrap-verify.ts writes SSF_CLIENT_ID + SSF_CLIENT_SECRET to
+# Vault KV after creating the "MCP-SSF Shared Signals" OIDC app on the Verify
+# tenant. If those aren't present yet we skip the antenna bring-up and surface
+# it as a manual step the customer runs after the Verify bootstrap.
+VAULT_TOKEN_FOR_CHECK="${VAULT_DEV_ROOT_TOKEN:-vva-dev-root-token}"
+if curl -sf -H "X-Vault-Token: ${VAULT_TOKEN_FOR_CHECK}" \
+     http://127.0.0.1:8200/v1/secret/data/SSF_CLIENT_ID 2>/dev/null \
+     | grep -q '"SSF_CLIENT_ID"'; then
+  echo ""
+  echo "[bootstrap-all] SSF creds detected in Vault — bringing up Antenna SSF pipeline..."
+  bash "${REPO_ROOT}/scripts/bootstrap-antenna.sh"
+else
+  echo ""
+  echo "[bootstrap-all] SSF creds NOT in Vault yet — skipping Antenna bring-up."
+  echo "  Run 'bash scripts/bootstrap-antenna.sh' AFTER 'cd infra/verify && npm run bootstrap'"
+  echo "  (the Verify bootstrap writes SSF_CLIENT_ID + SSF_CLIENT_SECRET to Vault KV)."
+fi
+
 echo ""
 echo "[bootstrap-all] Done. Next steps:"
 echo "  1. cd infra/verify && npm install && cp .env.example .env  # then fill in your Verify admin creds"
 echo "  2. cd infra/verify && npm run probe                         # confirm tenant reachable"
-echo "  3. cd infra/verify && npm run bootstrap                      # creates attribute, policy, OIDC apps"
-echo "  4. Copy verify-output.json values into mcp-server/.env"
-echo "  5. cd mcp-server && npm install && npm run dev"
-echo "  6. cd agent && python3 -m venv .venv && source .venv/bin/activate && pip install -e ."
-echo "  7. cd agent && cp .env.example .env  # set ANTHROPIC_API_KEY"
-echo "  8. cd agent && uvicorn healthcare_agent.main:app --host 127.0.0.1 --port 8080"
+echo "  3. cd infra/verify && npm run bootstrap                      # creates attribute, policy, OIDC apps + writes SSF creds to Vault"
+echo "  4. bash scripts/bootstrap-antenna.sh                         # (skip if it ran above) starts Antenna transmitter + receiver"
+echo "  5. Copy verify-output.json values into mcp-server/.env"
+echo "  6. cd mcp-server && npm install && npm run dev"
+echo "  7. cd agent && python3 -m venv .venv && source .venv/bin/activate && pip install -e ."
+echo "  8. cd agent && cp .env.example .env  # set ANTHROPIC_API_KEY"
+echo "  9. cd agent && uvicorn healthcare_agent.main:app --host 127.0.0.1 --port 8080"
 echo ""
 echo "Then run scripts/smoke-test.sh with a clinician access token."
