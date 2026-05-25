@@ -1,0 +1,51 @@
+---
+# IBM Verify Antenna v26.03 — Receiver storage configuration
+#
+# Schema reference: /tmp/verify-antenna-recipes/config/ibm-verify-antenna-config-ref.md §5 + §6
+# Canonical recipe: /tmp/verify-antenna-recipes/deploying/receiver/container-runtime/configs/storage.yml
+#
+# COOKBOOK SIMPLIFICATION:
+# The canonical recipe uses Postgres for `config` + Kafka for `ssf_2_action`. We
+# use a single SQLite file at /db/receiver.db for both. The v26.03 schema permits
+# this (config-ref §6.1.1: `config` supports sqlite|postgresql; §6.4.1:
+# `ssf_2_action` supports sqlite|kafka).
+#
+# Receiver-side databases ONLY — the receiver does NOT need raw_2_ssf, ssf_2_set,
+# or poll_stage (those are transmitter-side).
+#
+# v26.03 invariants:
+#   - `version: 26.03` MUST be the first key
+#   - top-level keys (no `storage:` wrapper)
+version: 26.03
+
+keystores:
+  # The HTTPS server cert for the receiver's listener on :9043 (management +
+  # SSF push endpoints share the same port + cert).
+  - name: server
+    type: pem
+    certificate:
+      - label: cert
+        content: "@keys/server.pem"
+    key:
+      - label: key
+        content: "@keys/server.key"
+
+server_connections:
+  - name: sqlitefile
+    type: sqlite
+    database_name: antenna
+    hosts:
+      - hostname: "file:///db/receiver.db?cache=shared"
+        hostport: 0
+
+databases:
+  # Receiver's own stream-config record (its subscription to the transmitter).
+  # NOT shared with the transmitter's config db; each role keeps its own.
+  config:
+    server: sqlitefile
+
+  # Received SETs awaiting action-handler dispatch. Worker_threads in
+  # receiver.yml MUST be <= partitions.
+  ssf_2_action:
+    server: sqlitefile
+    partitions: 2
