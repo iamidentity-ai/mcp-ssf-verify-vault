@@ -1,5 +1,7 @@
 # Securing Your MCP Server with Shared Signals: IBM Verify + HashiCorp Vault + IBM Antenna
 
+> Live cookbook (once the repo is public): https://iamidentity-ai.github.io/mcp-ssf-verify-vault/
+
 > A 45-minute hands-on walkthrough that builds on [mcp-verify-vault](https://github.com/iamidentity-ai/mcp-verify-vault) and adds the OpenID Shared Signals Framework: when a clinician denies a VIP step-up MFA push three times in a row, the MCP server emits a CAEP `session-revoked` event into a local IBM Antenna v26.03 container, Antenna calls IBM Verify's `DELETE /v1.0/auth/sessions/{userId}`, and the user's next request returns 401 across every app federated to the tenant. The same chain of trust the base cookbook teaches — IBM Verify policy + HashiCorp Vault ephemeral credentials — extended with real-time tenant-wide session revocation.
 
 > **Already comfortable with the base cookbook?** Jump straight to chapters 13–17: [SSF architecture](docs/ssf-architecture.md), [SSF setup](docs/ssf-setup.md), [SSF demo walkthrough](docs/ssf-demo-walkthrough.md), [SSF troubleshooting](docs/ssf-troubleshooting.md), [SSF manual deployment](docs/ssf-manual-deployment.md). If not, the base chapters in this repo are unchanged from mcp-verify-vault — read those first.
