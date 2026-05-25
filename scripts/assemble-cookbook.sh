@@ -16,7 +16,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 # Two parallel arrays. Keep these arrays in lockstep with the TOC in
-# docs/cookbook-header.md (architecture is chapter 1; SIEM is chapter 14).
+# docs/cookbook-header.md (architecture is chapter 1; SIEM is chapter 19).
+# Chapters 13-17 are the SSF extension (added by this repo on top of the
+# base mcp-verify-vault cookbook); chapters 18-19 are the base troubleshooting
+# + SIEM chapters.
 CHAPTERS=(
   "architecture"
   "identity-chain"
@@ -30,6 +33,11 @@ CHAPTERS=(
   "smoke-test"
   "llm-options"
   "mcp-anatomy"
+  "ssf-architecture"
+  "ssf-setup"
+  "ssf-demo-walkthrough"
+  "ssf-troubleshooting"
+  "ssf-manual-deployment"
   "troubleshooting"
   "siem-logging"
 )
@@ -47,6 +55,11 @@ TITLES=(
   "End-to-end smoke test"
   "Swapping the LLM"
   "Anatomy of an MCP call"
+  "SSF architecture"
+  "SSF setup"
+  "SSF demo walkthrough"
+  "SSF troubleshooting"
+  "SSF manual deployment"
   "Troubleshooting"
   "Logging for an enterprise SIEM"
 )
