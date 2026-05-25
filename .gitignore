@@ -69,3 +69,17 @@ agent/uv.lock
 
 # Local-only runbooks, scratch scripts, and validation logs. Never commit.
 .local/
+
+# IBM Antenna runtime artifacts — never commit
+infra/antenna/.env
+infra/antenna/deploying/transmitter/configs/keys/*.key
+infra/antenna/deploying/transmitter/configs/keys/*.pem
+infra/antenna/deploying/transmitter/configs/transmitter.yml
+infra/antenna/deploying/receiver/configs/keys/*.key
+infra/antenna/deploying/receiver/configs/keys/*.pem
+infra/antenna/deploying/receiver/configs/receiver.yml
+infra/antenna/recipes/mcp-ssf/verify-receiver/configs/js/session_revoked.js
+infra/antenna/db/*
+!infra/antenna/db/.gitkeep
+!infra/antenna/deploying/transmitter/configs/keys/.gitkeep
+!infra/antenna/deploying/receiver/configs/keys/.gitkeep
