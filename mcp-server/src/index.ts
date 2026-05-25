@@ -24,6 +24,8 @@ import { listPatientsForClinician } from './tools/list-patients-for-clinician.js
 import { exchangeToken } from './verify/token-exchange.js';
 import { mintCred, revokeLease } from './vault/verify-rar-client.js';
 import { runAsEphemeralRole } from './db/pool.js';
+import { dispatchToolWithDenyTracking } from './ssf/dispatch-wrapper.js';
+import { extractClaims } from './ssf/bearer-claims.js';
 
 const PORT = Number(process.env.PORT ?? 3012);
 const SERVICE = 'vva-mcp-server';
@@ -85,13 +87,30 @@ app.post('/tool', async (req: Request, res: Response) => {
   const args: Record<string, unknown> = (body['args'] ?? body['arguments'] ?? {}) as Record<string, unknown>;
   const bearer = (req.header('authorization') || '').replace(/^Bearer /, '');
   if (!bearer) return res.status(401).json({ error: 'missing_bearer' });
+  if (!toolName) return res.status(400).json({ error: 'missing_tool_name' });
   try {
-    const result = await dispatchTool(toolName!, args, bearer);
+    // Decode the bearer for SSF attribution. Opaque (non-JWT) tokens return
+    // undefined fields — in that case we fall back to plain dispatchTool with
+    // no SSF tracking (we can't attribute denies to a user without a sub).
+    const { verifyUserId, email } = extractClaims(bearer);
+    const result = verifyUserId
+      ? await dispatchToolWithDenyTracking({
+          toolName,
+          args,
+          bearer,
+          verifyUserId,
+          email,
+          inner: dispatchTool,
+        })
+      : await dispatchTool(toolName, args, bearer);
     res.json(result);
   } catch (err) {
     const e = err as Error & { code?: string };
+    if (e.code === 'session_revoked_threshold_reached') {
+      return res.status(401).json({ error: 'session_revoked_threshold_reached', message: e.message });
+    }
     if (e.code === 'unknown_tool') return res.status(400).json({ error: 'unknown_tool', toolName });
-    res.status(500).json({ error: 'tool_error', message: e.message });
+    res.status(500).json({ error: 'tool_error', message: e.message, code: e.code });
   }
 });
 
