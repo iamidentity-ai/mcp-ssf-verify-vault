@@ -47,10 +47,20 @@ The local stack is intentionally small. The following are common assumptions abo
 *   No Cloudflare or other tunnel service. Everything binds to `127.0.0.1`.
 *   No NAT gateway, VPC endpoint, or private link. The local stack does not need outbound access beyond Verify and your chosen LLM provider.
 *   No SPIRE server. Workload identity to Vault is unnecessary because the OBO JWT itself is the credential Vault validates.
-*   No central event bus, CAEP transmitter, or session-revoke fabric. Auditing is via the standard surfaces (Vault audit, PostgreSQL log, agent log, Verify event stream) and is covered in `docs/siem-logging.md`.
 *   No bespoke aggregator or correlation engine. Every record carries the OBO `jti` and a SIEM joins on that field.
 
 For this test deployment, they are not in the critical path for a working end-to-end demo on a laptop.
+
+## After the identity chain: SSF for revocation
+
+The seven steps above describe a *successful* tool call. This cookbook also adds the other direction — what happens when a clinician is trying to do something they shouldn't, and the per-call gate keeps saying no. Specifically, when a user denies three step-up MFA pushes in a row for VIP reads, the MCP server emits a CAEP `session-revoked` event into a local IBM Antenna container; Antenna calls IBM Verify's `DELETE /v1.0/auth/sessions/{userId}`; every session that user has across every OIDC app federated to the tenant is killed within about 30 to 75 seconds. This is the Shared Signals Framework loop, and it's an *addition* to the per-call chain, not a replacement.
+
+Two more containers run on your machine when the SSF pipeline is up:
+
+5. **IBM Antenna transmitter (`vva-antenna-transmitter`).** The v26.03 image at port 9044. The MCP server POSTs CAEP events at its `/sources/mcp/events` ingester. The transmitter persists the event, signs it as a Security Event Token (a JWT carrying the CAEP payload), and exposes it on its poll endpoint.
+6. **IBM Antenna receiver (`vva-antenna-receiver`).** The v26.03 image at port 9043 (bound to `127.0.0.1` only — the mgmt endpoint ships unauthenticated). The receiver polls the transmitter for new SETs, validates them, and runs the action handler — `session_revoked.js` — which calls IBM Verify's session-revocation admin API. The user's next request to any app federated to the tenant returns 401.
+
+The transmitter, the receiver, the action handler, and the Verify admin API call are all *downstream* of the user's chat thread. The synchronous reply to the user — "your session is being revoked" — happens immediately on the third denial, before the Antenna pipeline completes the actual revocation. The browser-visible message can't wait for the round trip. See [SSF architecture](./ssf-architecture.md) for the full end-to-end sequence diagram and [SSF setup](./ssf-setup.md) for the one-command bootstrap.
 
 ## What you just did
 
