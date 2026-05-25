@@ -18,7 +18,7 @@
 //   - CLAUDE.md § "SSF/CAEP pipeline invariants" — ANTENNA_SOURCE_ID is the
 //     ingester's only configured source_id; any other value 404s
 //
-// TLS NOTE: Antenna serves self-signed HTTPS on localhost:9042. The MCP
+// TLS NOTE: Antenna serves self-signed HTTPS on localhost:9044. The MCP
 // process must run with NODE_TLS_REJECT_UNAUTHORIZED=0 in its env, OR the
 // caller has to supply a fetch with a permissive https.Agent. The cookbook's
 // docker-compose / systemd unit sets the env var.
@@ -30,11 +30,11 @@
 export const SESSION_REVOKED_URI =
   'https://schemas.openid.net/secevent/caep/event-type/session-revoked';
 
-// Default: the cookbook's docker-compose runs Antenna at localhost:9042 with
+// Default: the cookbook's docker-compose runs Antenna at localhost:9044 with
 // source_id=mcp configured in transmitter.yml + .env (ANTENNA_SOURCE_ID=mcp).
 // Override via ANTENNA_SOURCE_URL for a different host/port/source.
 const DEFAULT_SOURCE_URL =
-  process.env.ANTENNA_SOURCE_URL ?? 'https://localhost:9042/sources/mcp/events';
+  process.env.ANTENNA_SOURCE_URL ?? 'https://localhost:9044/sources/mcp/events';
 
 type FetchFn = typeof fetch;
 let _fetch: FetchFn | undefined;
