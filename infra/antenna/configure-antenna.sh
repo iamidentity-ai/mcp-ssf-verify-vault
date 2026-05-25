@@ -1,6 +1,8 @@
 #!/bin/bash
 # configure-antenna.sh — fetches SSF creds from Vault, templates the rendered configs.
 #
+# Step-by-step explanation: docs/ssf-manual-deployment.md § "configure-antenna.sh — read Vault, template configs"
+#
 # Reads from Vault KV (paths in infra/antenna/.env):
 #   ${VAULT_SSF_CLIENT_ID_PATH}      field: SSF_CLIENT_ID
 #   ${VAULT_SSF_CLIENT_SECRET_PATH}  field: SSF_CLIENT_SECRET

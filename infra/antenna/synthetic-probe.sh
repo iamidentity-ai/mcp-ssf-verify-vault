@@ -2,6 +2,8 @@
 # synthetic-probe.sh — fires a session-revoked event into the transmitter, watches
 # the receiver logs for the session_revoked action handler to complete within 75s.
 #
+# Step-by-step explanation: docs/ssf-manual-deployment.md § "synthetic-probe.sh — end-to-end health check"
+#
 # Use this after bootstrap-antenna.sh + create-stream.sh to confirm the full SSF
 # pipeline is healthy:
 #   MCP -> transmitter ingester -> sign as SET -> receiver poll -> action handler ->

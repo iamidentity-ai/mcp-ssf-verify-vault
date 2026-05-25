@@ -3,6 +3,8 @@
 # deployment. Produces independent cert pairs for the transmitter and receiver
 # containers so each role is deployable on its own host.
 #
+# Step-by-step explanation: docs/ssf-manual-deployment.md § "generate-certs.sh — TLS + JWT signer certs"
+#
 # Idempotent — if all expected files already exist, the script is a no-op.
 # Re-run after `rm -rf deploying/{transmitter,receiver}/configs/keys/` to rotate.
 #

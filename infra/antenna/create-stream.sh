@@ -1,6 +1,8 @@
 #!/bin/bash
 # create-stream.sh — registers the receiver as an SSF subscriber to the transmitter.
 #
+# Step-by-step explanation: docs/ssf-manual-deployment.md § "create-stream.sh — v2 receiver-side stream registration"
+#
 # v26.03 stream-create lives ON THE RECEIVER at POST :9043/mgmt/v2.0/receivers/config
 # (the v25.05 :9043/mgmt/v1.0/receivers/config on the TRANSMITTER is gone — see
 # /tmp/v26.03-notes.md §D13 for the version-by-version table).

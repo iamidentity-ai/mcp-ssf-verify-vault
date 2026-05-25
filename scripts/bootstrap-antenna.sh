@@ -1,6 +1,8 @@
 #!/bin/bash
 # bootstrap-antenna.sh — one-command setup of the IBM Antenna SSF pipeline.
 #
+# Step-by-step explanation: docs/ssf-manual-deployment.md § "bootstrap-antenna.sh — the orchestrator"
+#
 # Sequence:
 #   0. .env check (copy from .env.example if missing; require customer edit)
 #   1. generate-certs.sh        — self-signed TLS + JWT-signer certs (idempotent)
