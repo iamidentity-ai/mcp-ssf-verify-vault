@@ -118,6 +118,18 @@ app.post('/tool', async (req: Request, res: Response) => {
 function buildMcpServer(bearer: string): McpServer {
   const server = new McpServer({ name: SERVICE, version: '0.1.0' });
 
+  // Route every tool callback through the SSF wrapper when the bearer is a
+  // parseable JWT (so we can attribute denies to a Verify user). Opaque
+  // tokens fall back to plain dispatchTool. The MCP SDK auto-wraps thrown
+  // errors back to the client, preserving the threshold-reached message.
+  async function dispatchWithSsf(toolName: string, args: Record<string, unknown>): Promise<unknown> {
+    const { verifyUserId, email } = extractClaims(bearer);
+    if (!verifyUserId) return await dispatchTool(toolName, args, bearer);
+    return await dispatchToolWithDenyTracking({
+      toolName, args, bearer, verifyUserId, email, inner: dispatchTool,
+    });
+  }
+
   server.registerTool(
     'get_patient_record',
     {
@@ -126,7 +138,7 @@ function buildMcpServer(bearer: string): McpServer {
       inputSchema: { mrn: z.string() },
     },
     async ({ mrn }) => {
-      const r = await dispatchTool('get_patient_record', { mrn }, bearer);
+      const r = await dispatchWithSsf('get_patient_record', { mrn });
       return { content: [{ type: 'text' as const, text: JSON.stringify(r) }] };
     },
   );
@@ -139,7 +151,7 @@ function buildMcpServer(bearer: string): McpServer {
       inputSchema: { clinicianUpn: z.string().optional() },
     },
     async ({ clinicianUpn }) => {
-      const r = await dispatchTool('list_patients_for_clinician', { clinicianUpn }, bearer);
+      const r = await dispatchWithSsf('list_patients_for_clinician', { clinicianUpn });
       return { content: [{ type: 'text' as const, text: JSON.stringify(r) }] };
     },
   );
