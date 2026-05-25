@@ -2,6 +2,8 @@
 
 This is the security story in one chapter. The MCP server in this cookbook is the only process that makes IBM Verify calls, the only one that handles the on-behalf-of token, the only one that talks to HashiCorp Vault. Everything that protects a patient record is concentrated in that one process. Read this chapter before the implementation chapters so the chain's *shape* is clear before you stand it up piece by piece.
 
+**Beyond the per-call chain — revocation.** The chain above secures every successful call. But what happens when a user is trying to do something they shouldn't — for example, denying MFA pushes for a VIP record they have no business reading? In this cookbook, three consecutive denials trigger a tenant-wide session revocation through the Shared Signals Framework. The MCP server emits a CAEP `session-revoked` event into a local IBM Antenna v26.03 container; Antenna calls IBM Verify's `DELETE /v1.0/auth/sessions/{userId}`; every session that user has across every OIDC app federated to the tenant is killed within ~30 seconds. See [chapter 13: SSF architecture](ssf-architecture.md) for the full story.
+
 ## The five-second version
 
 > Clinician bearer in -> MCP server builds an RFC 9396 Rich Authorization Request -> IBM Verify policy decides (with step-up MFA where the policy demands it) -> Verify signs the RAR into an OBO JWT -> HashiCorp Vault validates the OBO and matches its RAR -> ephemeral 5-minute PostgreSQL role -> one SELECT -> lease revoked.
