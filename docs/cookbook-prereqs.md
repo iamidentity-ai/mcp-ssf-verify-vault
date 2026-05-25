@@ -1,5 +1,7 @@
 Have the following installed and ready before you start chapter 5. The first run takes about 30 minutes; subsequent runs (with the bootstraps already done) are a few minutes.
 
+> **Already deployed IBM Verify Antenna v25.05?** v26.03 ships separate transmitter + receiver images and a new config schema (no top-level `processor:` block, mandatory `version: 26.03`, new v2 receiver-side stream-create endpoint). If you have a v25.05 deployment in production, read [chapter 13: SSF architecture § "What's new in v26.03"](./ssf-architecture.md#whats-new-in-v2603) before installing the v26.03 images this cookbook pulls. Customers starting fresh can ignore this note — the prereqs below cover the v26.03 case.
+
 ## The easy path on macOS
 
 If you are on a Mac and you want a Docker daemon WITHOUT installing Docker Desktop, the repo ships a one-shot installer that brings up Colima plus everything else this cookbook needs:
