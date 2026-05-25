@@ -30,7 +30,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from strands import Agent
 
 from .llm import make_model
-from .mcp_client import build_mcp_client
+from .mcp_client import (
+    SessionGuardSignal,
+    build_mcp_client,
+    wrap_tools_with_session_guard,
+)
 from .prompts import SYSTEM_PROMPT, TOOL_GUIDANCE
 
 load_dotenv()
@@ -44,6 +48,13 @@ log = logging.getLogger("healthcare-agent")
 MCP_URL = os.environ.get("HEALTHCARE_MCP_URL", "http://127.0.0.1:3012/mcp")
 
 app = FastAPI(title="healthcare-agent", version="0.1.0")
+
+
+def _sse(payload: str) -> bytes:
+    """Encode an arbitrary string as one SSE ``data:`` event with proper
+    newline handling per the EventSource spec."""
+    framed = payload.replace("\n", "\ndata: ")
+    return f"data: {framed}\n\n".encode("utf-8")
 
 
 @app.get("/healthz")
@@ -65,17 +76,39 @@ async def invoke(request: Request, authorization: str | None = Header(default=No
     log.info("invoke prompt=%r token_present=%s", prompt, bool(bearer))
 
     async def event_stream() -> AsyncIterator[bytes]:
+        # The signal is set by SessionAwareMCPTool when an MCP tool result
+        # contains the SSF threshold-reached marker. We check it after every
+        # yielded event and break out BEFORE the next LLM turn so the model
+        # never gets to "helpfully" retry the tool call.
+        signal = SessionGuardSignal()
         with build_mcp_client(MCP_URL, bearer) as mcp_client:
-            tools = mcp_client.list_tools_sync()
+            tools = wrap_tools_with_session_guard(mcp_client.list_tools_sync(), signal)
             agent = Agent(
                 model=make_model(),
                 tools=tools,
                 system_prompt=f"{SYSTEM_PROMPT}\n\n{TOOL_GUIDANCE}",
             )
-            async for event in agent.stream_async(prompt):
-                if "data" in event and isinstance(event["data"], str):
-                    payload = event["data"].replace("\n", "\ndata: ")
-                    yield f"data: {payload}\n\n".encode("utf-8")
+            stream = agent.stream_async(prompt)
+            try:
+                async for event in stream:
+                    if "data" in event and isinstance(event["data"], str):
+                        yield _sse(event["data"])
+                    if signal.triggered:
+                        # SSF kicked in. Surface the verbatim MCP message and
+                        # stop — do not let the agent loop start another turn.
+                        log.info("session_revoked_threshold_reached — stopping agent turn")
+                        yield _sse(signal.message)
+                        break
+            finally:
+                # Best-effort close so the background event loop unwinds even
+                # if we broke out early. Strands' stream_async is an async
+                # generator; aclose() is the standard cleanup hook.
+                aclose = getattr(stream, "aclose", None)
+                if aclose is not None:
+                    try:
+                        await aclose()
+                    except Exception:  # noqa: BLE001 — defensive cleanup
+                        pass
             yield b"data: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
