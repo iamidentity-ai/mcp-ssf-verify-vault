@@ -36,7 +36,14 @@ VERIFY_OUTPUT="${REPO_ROOT}/infra/verify/verify-output.json"
 # ── Inputs (override via env) ────────────────────────────────────────────────
 TOKEN_FILE="${TOKEN_FILE:-/tmp/clinician.token}"
 MCP_URL="${MCP_URL:-http://localhost:3012/tool}"
-VIP_MRN="${VIP_MRN:-MRN-99001}"
+# A0042 (Senator Riley Reed) is the canonical VIP MRN in the cookbook's
+# default seed (infra/postgres/02_seed.sql). The other VIP row is A0099
+# (CEO Taylor Thornton). Override via env if your seed uses different MRNs:
+#   VIP_MRN=MRN-99001 bash scripts/smoke-test-ssf.sh
+# Or auto-detect the first VIP row from Postgres:
+#   VIP_MRN=$(docker exec vva-postgres psql -U vva_admin healthcare -tAc \
+#     "SELECT mrn FROM clinical.patients WHERE vip_flag=TRUE LIMIT 1;")
+VIP_MRN="${VIP_MRN:-A0042}"
 INTER_CALL_SLEEP_SEC="${INTER_CALL_SLEEP_SEC:-3}"
 REVOKE_TIMEOUT_SEC="${REVOKE_TIMEOUT_SEC:-75}"
 
