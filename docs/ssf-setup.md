@@ -1,6 +1,6 @@
 ## SSF Setup
 
-This chapter stands up the SSF pipeline on top of the base cookbook stack. By the end you will have two new containers running (`vva-antenna-transmitter` and `vva-antenna-receiver`), one OIDC application provisioned in your IBM Verify tenant, one stream registered between transmitter and receiver, and one synthetic probe confirming an event posted at the ingester ends with a `204 No Content` from IBM Verify's session-revocation API.
+This chapter stands up the SSF pipeline on top of the base cookbook stack. By the end you will have two new containers running (`vva-antenna-transmitter` and `vva-antenna-receiver`), one API client provisioned in your IBM Verify tenant, one stream registered between transmitter and receiver, and one synthetic probe confirming an event posted at the ingester ends with a `204 No Content` from IBM Verify's session-revocation API.
 
 ## Prerequisites
 
@@ -11,28 +11,61 @@ Two new prerequisites for SSF:
 1. **A phone with the IBM Verify mobile app**, signed in as the clinician test user. The push factor must be enrolled — the demo in chapter 15 will fire a push and expect you to tap *Deny* three times.
 2. **A clinician test user whose `verifyUserId` you don't mind losing the session of repeatedly.** Each demo run revokes that user's tenant-wide sessions; you will sign them back in fresh each time.
 
-## Step 1: Provision the SSF management app in IBM Verify
+## Step 1: Provision the SSF management API client
 
-The script `infra/verify/bootstrap-verify.ts` (which you ran in chapter 5) was extended in this cookbook to create one additional OIDC application on your Verify tenant. The app is named **MCP-SSF Shared Signals**, uses the `client_credentials` grant, and gets five entitlements scoped to session and grant administration:
+The IBM Antenna `session_revoked.js` action handler needs an OAuth2 client with privileged entitlements to call IBM Verify's session-revocation endpoints. The canonical Verify pattern for machine-to-machine credentials with entitlements is an **API client**, not an OIDC application — the same pattern you used in chapter 5 for the bootstrap script's admin credential. Create it once in the Admin UI; the rest of this chapter is scripted.
 
-```
-readUsersAndGroups
-revokeUserSession
-revokeAllUserSessions
-readOidcOAuthGrants
-readOidcOAuthConsents
-```
+1.  Sign in to your IBM Verify Admin UI at `https://<your-tenant>.verify.ibm.com`.
+2.  Open **Security** -> **API**, click **Create API client**, and name it `mcp-ssf-shared-signals`.
+3.  Under **Entitlements**, grant all five of the following. Each is one of the Verify admin operations the action handler invokes when a CAEP `session-revoked` event arrives — the receiver mints a token, looks up the user (if the event lacks `verifyUserId`), then revokes every active session for that user.
+    *   Read users and groups
+    *   Revoke a session for a user
+    *   Revoke all sessions for a user
+    *   Read OIDC and OAuth application grants
+    *   Read OIDC and OAuth consents
+4.  Leave every other setting at its default. Click **Save**.
+5.  On the resulting page, copy the **Client ID** and **Client Secret**. Both go into Vault next; neither sits in any `.env` file.
 
-The script writes the resulting `clientId` and `clientSecret` to Vault KV at `secret/data/SSF_CLIENT_ID` and `secret/data/SSF_CLIENT_SECRET`. The `configure-antenna.sh` script reads them back from Vault at deploy time; they never sit on disk in plaintext. If you ran the base cookbook bootstrap before SSF was added, re-run it now:
+Land the credential in Vault:
 
 ```bash
-cd infra/verify
-npm run bootstrap
+docker exec -e VAULT_TOKEN=vva-dev-root-token vva-vault \
+  vault kv put secret/SSF_CLIENT_ID \
+    SSF_CLIENT_ID=<paste-client-id-from-admin-ui>
+
+docker exec -e VAULT_TOKEN=vva-dev-root-token vva-vault \
+  vault kv put secret/SSF_CLIENT_SECRET \
+    SSF_CLIENT_SECRET=<paste-client-secret-from-admin-ui>
 ```
 
-The bootstrap is idempotent — if the SSF app already exists, the script logs `[ssf] reusing existing app <id>` and skips creation. You can confirm in the Verify Admin Console: navigate to **Applications**, look for `MCP-SSF Shared Signals`. The entitlements appear under the app's **Entitlements** tab.
+Expected for each command:
 
-[Screenshot placeholder: Verify Admin Console showing the MCP-SSF Shared Signals app's Entitlements tab with the five granted entitlements]
+```
+=== Secret Path ===
+secret/data/SSF_CLIENT_ID
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       <timestamp>
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            1
+```
+
+`infra/antenna/configure-antenna.sh` reads from these two KV paths on every run. If you ever rotate the API client's secret in the Admin UI, re-run the `vault kv put` for `SSF_CLIENT_SECRET` and the next antenna bootstrap picks up the new value. If you ever delete the API client and re-create it, both `vault kv put` commands need to re-run.
+
+You can confirm the credential is in Vault before continuing:
+
+```bash
+docker exec -e VAULT_TOKEN=vva-dev-root-token vva-vault \
+  vault kv get -field=SSF_CLIENT_ID secret/SSF_CLIENT_ID
+```
+
+That should echo the client id you just pasted. If you get an empty value or a "no value found" error, the `vault kv put` above didn't take — re-run it.
+
+[Screenshot placeholder: Verify Admin Console showing the mcp-ssf-shared-signals API client's Entitlements page with the five granted entitlements]
 
 ## Step 2: Configure the antenna .env
 

@@ -11,7 +11,7 @@ transmitter signs a CAEP `session-revoked` event and stages it for poll. The
 receiver pulls the SET, decodes it, and dispatches to `session_revoked.js`. The
 handler:
 
-1. Mints a tenant-admin OAuth token (client_credentials on the SSF OIDC client)
+1. Mints a tenant-admin OAuth token (client_credentials on the SSF management API client)
 2. Looks up the user by email (from `sub_id.email` in the SET payload)
 3. Resets the user's password (auto-generated, email notification sent)
 4. Calls `DELETE /v1.0/auth/sessions/{userId}` to terminate **every** active
@@ -25,12 +25,12 @@ re-run `configure-antenna.sh`.
 ## Prerequisites
 
 - The companion [transmitter recipe](../transmitter/) deployed and running
-- An **API client** on the IBM Verify tenant (created automatically by
-  `infra/verify/bootstrap-verify.ts`) with these entitlements:
+- An **API client** on the IBM Verify tenant (created manually in the Admin UI under
+  **Security** -> **API**; see `docs/ssf-setup.md` chapter 14 step 1) with these entitlements:
   - Read users and groups
   - Reset password of any user
   - Revoke all sessions for a user
-- The SSF OIDC client's clientId + clientSecret stored in Vault at
+- The SSF management API client's clientId + clientSecret stored in Vault at
   `secret/data/SSF_CLIENT_ID` + `secret/data/SSF_CLIENT_SECRET`
 
 ## Deployment

@@ -70,7 +70,7 @@ If you'd rather just run the script: `./infra/antenna/generate-certs.sh`.
 
 ## §2 `configure-antenna.sh` — read Vault, template configs
 
-Lives at `infra/antenna/configure-antenna.sh`. Two responsibilities: pull the SSF management app's `clientId` + `clientSecret` from HashiCorp Vault, then substitute them (plus two hostname values) into four template files.
+Lives at `infra/antenna/configure-antenna.sh`. Two responsibilities: pull the SSF management API client's `clientId` + `clientSecret` from HashiCorp Vault (where you put them by hand in chapter 14 step 1), then substitute them (plus two hostname values) into four template files.
 
 ```
 inputs (Vault KV reads):
@@ -91,7 +91,7 @@ The `mcp_mapper.js` file is a straight `cp` rather than a symlink because docker
 
 The `--no-restart` flag exists for one specific reason: `bootstrap-antenna.sh` calls `configure-antenna.sh --no-restart` because the orchestrator brings up the containers itself in a known order (step 3 in §5 below). A standalone re-run of `configure-antenna.sh` (no flag) restarts both containers so the new config takes effect immediately. Both are idempotent.
 
-The idempotency-safety guard is worth calling out because it caught a real bug. If `bootstrap-verify.ts` has not yet run (or ran but failed), the Vault KV lookups for `SSF_CLIENT_ID` and `SSF_CLIENT_SECRET` return empty strings. An earlier version of the script let the `sed` substitutions write the empty values into the rendered configs, which then silently failed at runtime (the receiver mints a token at poll time and gets `invalid_client` from Verify). The current script `exit 1`s with a loud error rather than overwriting good values with empty ones. See `feedback_cookbook_idempotent_bootstrap_safety.md` for the wider rule — never let an idempotent bootstrap clobber known-good state with empty values from an upstream that hasn't run yet.
+The idempotency-safety guard is worth calling out because it caught a real bug. If the customer has not yet run the two `vault kv put` commands from chapter 14 step 1 (creating the API client in the Admin UI and landing its credentials in Vault), the KV lookups for `SSF_CLIENT_ID` and `SSF_CLIENT_SECRET` return empty strings. An earlier version of the script let the `sed` substitutions write the empty values into the rendered configs, which then silently failed at runtime (the receiver mints a token at poll time and gets `invalid_client` from Verify). The current script `exit 1`s with a loud error rather than overwriting good values with empty ones. See `feedback_cookbook_idempotent_bootstrap_safety.md` for the wider rule — never let an idempotent bootstrap clobber known-good state with empty values from an upstream that hasn't run yet.
 
 **Manual equivalent.** Read the Vault KV values and template the configs by hand:
 
@@ -100,7 +100,7 @@ The idempotency-safety guard is worth calling out because it caught a real bug. 
 cd infra/antenna
 set -a; source .env; set +a
 
-# Fetch the SSF management app's clientId + clientSecret from Vault
+# Fetch the SSF management API client's clientId + clientSecret from Vault
 CID=$(curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" \
   "${VAULT_ADDR}/v1/secret/data/SSF_CLIENT_ID" \
   | python3 -c "import json,sys;print(json.load(sys.stdin)['data']['data']['SSF_CLIENT_ID'])")
@@ -173,9 +173,9 @@ Field by field:
 
 - `name` — a human-readable label for the stream. Operator-chosen; the receiver uses it in log lines.
 - `metadataUrl` — where the receiver fetches the transmitter's SSF metadata (algorithms, JWKS URL, delivery endpoint). The receiver polls this URL on startup and again when its stream config is updated.
-- `authorizationScheme.type` — `urn:ietf:rfc:6749` is the SSF spec's reference to "use OAuth 2.0". The receiver mints a token via the SSF management app's `client_credentials` grant and presents it as a `Bearer` header to the transmitter on every poll request.
+- `authorizationScheme.type` — `urn:ietf:rfc:6749` is the SSF spec's reference to "use OAuth 2.0". The receiver mints a token via the SSF management API client's `client_credentials` grant and presents it as a `Bearer` header to the transmitter on every poll request.
 - `authorizationScheme.attributes.grantType` — `client_credentials`. The receiver authenticates as a service principal, not as a user.
-- `authorizationScheme.attributes.clientId` / `clientSecret` — the MCP-SSF Shared Signals app's credentials, written to Vault by `infra/verify/bootstrap-verify.ts`.
+- `authorizationScheme.attributes.clientId` / `clientSecret` — the `mcp-ssf-shared-signals` API client's credentials, landed in Vault by the customer's `vault kv put` commands from chapter 14 step 1.
 - `authorizationScheme.attributes.clientAuthenticationMethod` — `client_secret_post` sends the credentials in the POST body (rather than as a Basic auth header). Either method works; the cookbook picks `post` to match what `bootstrap-verify.ts` enables on the Verify app.
 - `authorizationScheme.attributes.discoveryURI` — the OIDC discovery document for the Verify tenant. The receiver uses it to find the tenant's `/oauth2/token` endpoint.
 - `ssfStream.delivery.method` — `urn:ietf:rfc:8936` is "SSF poll-based SET delivery". The receiver polls the transmitter every few seconds asking "give me any SETs you've signed since I last polled". The alternative `urn:ietf:rfc:8935` is push-based (transmitter POSTs to the receiver) — this cookbook uses poll because the receiver is bound to `127.0.0.1` and unreachable from the transmitter's network namespace.
@@ -319,7 +319,7 @@ Step 2 uses `--no-restart` because the containers don't exist yet on the first r
 What to do if step N fails:
 
 - Step 1 (certs) — only fails if the operator lacks write permission on `deploying/{transmitter,receiver}/configs/keys/` or `openssl` isn't installed. Both are operator-side issues, not code issues.
-- Step 2 (configure) — fails loudly if Vault returns empty creds (re-run `infra/verify/bootstrap-verify.ts`) or if `infra/antenna/.env` is missing (copy from `.env.example`).
+- Step 2 (configure) — fails loudly if Vault returns empty creds (re-run the two `vault kv put` commands from chapter 14 step 1 to land the API client's credentials in Vault) or if `infra/antenna/.env` is missing (copy from `.env.example`).
 - Step 3 (compose up) — fails if the cookbook's `infra/docker-compose.yml` services postgres + vault aren't already running, or if ports 9043/9044 are bound by another process (`lsof -iTCP -sTCP:LISTEN -P -n | grep '9043\|9044'`).
 - Step 4 (sleep) — won't fail directly, but if containers are crashing during this window the next steps will. Check `docker logs vva-antenna-transmitter vva-antenna-receiver` in another terminal during the sleep.
 - Step 5 (create-stream) — fails with a non-2xx response if the receiver isn't healthy yet (extend the step 4 sleep), if the receiver mgmt endpoint isn't bound (check port mapping in compose), or if the embedded SSF clientId/secret is wrong (re-run `configure-antenna.sh` to refresh from Vault).

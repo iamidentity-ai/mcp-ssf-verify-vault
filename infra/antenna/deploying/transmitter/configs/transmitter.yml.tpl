@@ -4,7 +4,7 @@
 # Templated tokens (replaced by infra/antenna/scripts/configure-antenna.sh at deploy time):
 #   __ANTENNA_HOSTNAME__           — customer-facing hostname (TLS SAN, also embedded in base_url + issuer)
 #   __VERIFY_TENANT_HOSTNAME__     — IBM Verify tenant hostname (no scheme)
-#   __SSF_CLIENT_ID__              — clientId of the "MCP-SSF Shared Signals" OIDC client on the tenant
+#   __SSF_CLIENT_ID__              — clientId of the "mcp-ssf-shared-signals" API client on the tenant
 #   __SSF_CLIENT_SECRET__          — its secret
 #
 # Schema reference: /tmp/verify-antenna-recipes/config/ibm-verify-antenna-config-ref.md
@@ -92,13 +92,14 @@ javascript:
 # the receiver POSTs /mgmt/v2.0/receivers/config on itself, which then turns
 # around and calls the transmitter's stream-create endpoint with this bearer).
 #
-# The clientId/secret point at the "MCP-SSF Shared Signals" OIDC client created
-# by infra/verify/bootstrap-verify.ts on the IBM Verify tenant. Its entitlements:
+# The clientId/secret point at the "mcp-ssf-shared-signals" API client created
+# manually in the IBM Verify Admin UI under Security -> API (see docs/ssf-setup.md
+# chapter 14 step 1). Its entitlements:
 #   - Read users and groups
 #   - Revoke all sessions for a user
 #
 # These same credentials are also used by session_revoked.js (the action handler)
-# to mint a tenant admin token; consolidating to one OIDC client keeps Vault
+# to mint a tenant admin token; consolidating to one API client keeps Vault
 # storage simple.
 authorization_schemes:
   - spec_urn: "urn:ietf:rfc:6749"

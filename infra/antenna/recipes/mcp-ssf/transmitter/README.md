@@ -33,8 +33,8 @@ file copies required.
 1. Source `mcp_mapper.js` from this directory is copied to the running container's
    `/configs/js/` mount by the bootstrap script.
 2. `transmitter.yml.tpl` (one level up at `deploying/transmitter/configs/`) is
-   templated with your IBM Verify tenant + SSF OIDC client credentials (read from
-   Vault) and dropped at `/configs/transmitter.yml`.
+   templated with your IBM Verify tenant + SSF management API client credentials
+   (read from Vault) and dropped at `/configs/transmitter.yml`.
 3. The container starts; the receiver subscribes via `create-stream.sh`.
 
 ## Internals

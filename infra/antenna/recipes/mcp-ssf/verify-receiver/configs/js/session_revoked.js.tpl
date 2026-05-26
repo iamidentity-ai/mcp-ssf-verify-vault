@@ -14,7 +14,7 @@
 // Triggered by: receiver.yml's action_rule for event_type=session-revoked.
 // Fires when the mcp-ssf-verify-vault MCP server emits a session-revoked SET
 // after the 3-MFA-deny anomaly counter trips. The handler:
-//   1. Mints a tenant-admin OAuth token via client_credentials on the SSF OIDC client
+//   1. Mints a tenant-admin OAuth token via client_credentials on the SSF management API client
 //   2. Looks up the user by email (from sub_id.email in the SET payload)
 //   3. Resets the user's password (auto-generated, notification email sent)
 //   4. Deletes ALL active sessions for that user via DELETE /v1.0/auth/sessions/{id}

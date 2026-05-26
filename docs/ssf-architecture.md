@@ -130,4 +130,4 @@ This matches the cookbook's core argument that the MCP server is the security pe
 
 ## What's next
 
-Move on to [SSF Setup](./ssf-setup.md) to provision the Verify-side SSF management app, generate certs, template configs from Vault, and bring up the two Antenna containers. The synthetic probe at the end of that chapter is the gold-standard test that the pipeline is healthy — if it passes, the demo walkthrough in chapter 15 will work end-to-end.
+Move on to [SSF Setup](./ssf-setup.md) to provision the Verify-side SSF management API client, generate certs, template configs from Vault, and bring up the two Antenna containers. The synthetic probe at the end of that chapter is the gold-standard test that the pipeline is healthy — if it passes, the demo walkthrough in chapter 15 will work end-to-end.
