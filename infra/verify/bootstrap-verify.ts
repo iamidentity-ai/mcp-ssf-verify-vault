@@ -27,7 +27,6 @@ import { loadAdminCreds } from './admin-creds.js';
 const TENANT  = required('VERIFY_TENANT_HOST');
 const UI_NAME = process.env.VERIFY_UI_APP_NAME || 'vva-healthcare-ui';
 const TE_NAME = process.env.VERIFY_TE_APP_NAME || 'vva-healthcare-token-exchange';
-const SSF_NAME = process.env.VERIFY_SSF_APP_NAME || 'MCP-SSF Shared Signals';
 const POLICY_NAME = process.env.VERIFY_POLICY_NAME || 'HealthcareStepUp';
 const ATTR_NAME = process.env.VERIFY_ATTRIBUTE_NAME || 'healthcareRarPresent';
 const BASE = `https://${TENANT}`;
@@ -426,115 +425,6 @@ function buildTokenExchangeBody(policyId: string): Record<string, unknown> {
   };
 }
 
-// -- Step 4b: MCP-SSF Shared Signals OIDC app ---------------------------------
-// A third OIDC application used solely by the Antenna container's
-// session_revoked.js action handler. It runs client_credentials against
-// Verify's admin APIs to look up the userId (SCIM) and revoke every active
-// session for that user.
-//
-// Entitlements are sourced from healthcare's docs/runbooks/ssf-antenna.md
-// "Verify app required entitlements" section:
-//   - readUsersAndGroups       (SCIM lookup if event lacks verifyUserId)
-//   - revokeUserSession        (Revoke a session for a user)
-//   - revokeAllUserSessions    (Revoke all sessions for a user)
-//   - readOidcOAuthGrants      (Read OIDC and OAuth grants)
-//   - readOidcOAuthConsents    (Read OIDC and OAuth consents)
-//
-// We deliberately set useUserDefaultEntitlements:false + restrictEntitlements:true
-// + an explicit entitlements[] list so the client gets EXACTLY those grants
-// and nothing else (least privilege).
-function buildSsfAppBody(): Record<string, unknown> {
-  return {
-    name: SSF_NAME,
-    templateId: '998',
-    description: 'OAuth2 client used by the IBM Antenna container to call IBM Verify session-revocation APIs (cookbook: mcp-ssf-verify-vault)',
-    providers: {
-      saml: {
-        properties: {
-          companyName: COMPANY_NAME,
-          generateUniqueID: false,
-        },
-      },
-      sso: { userOptions: 'oidc' },
-      oidc: {
-        properties: {
-          grantTypes: {
-            authorizationCode: 'false',
-            implicit: 'false',
-            deviceFlow: 'false',
-            ropc: 'false',
-            jwtBearer: 'false',
-            policyAuth: 'false',
-            clientCredentials: 'true',
-            tokenExchange: 'false',
-          },
-          redirectUris: [],
-          idTokenSigningAlg: 'RS256',
-          accessTokenExpiry: 3600,
-          refreshTokenExpiry: 86400,
-          doNotGenerateClientSecret: 'false',
-          generateRefreshToken: 'false',
-          renewRefreshToken: 'true',
-          sendAllKnownUserAttributes: 'false',
-          consentType: 'dpcm',
-          additionalConfig: {
-            responseTypes: [],
-            responseModes: [],
-            logoutOption: 'none',
-            exchangeForSSOSessionOption: 'default',
-            // client_secret_post — Antenna's session_revoked.js posts client_id +
-            // client_secret in the form body, not in a Basic auth header.
-            clientAuthMethod: 'client_secret_post',
-            actorTokenRequired: false,
-            requestObjectParametersOnly: false,
-            // Least privilege — do NOT inherit the tenant default entitlement
-            // bucket. The entitlements[] array below is the complete grant list.
-            useUserDefaultEntitlements: false,
-            dpopBoundAccessTokens: false,
-            oidcv3: true,
-            requirePushAuthorize: false,
-            validateDPoPProofJti: false,
-            certificateBoundAccessTokens: false,
-            requestObjectSigningAlg: 'RS256',
-            authorizeRspSigningAlg: 'RS256',
-            authorizeRspEncryptionEnc: 'none',
-            authorizeRspEncryptionAlg: 'none',
-            dpopProofSigningAlg: 'RS256',
-            requestObjectMaxExpFromNbf: 1800,
-            requestObjectRequireExp: true,
-            suppressDefaultClaims: false,
-          },
-          idTokenEncryptAlg: 'none',
-          idTokenEncryptEnc: 'none',
-        },
-        scopes: [
-          { name: 'ssf.manage', description: 'Manage IBM Verify sessions for the SSF action handler' },
-        ],
-        restrictScopes: 'true',
-        // Entitlement key names sourced from healthcare/docs/runbooks/ssf-antenna.md.
-        entitlements: [
-          'readUsersAndGroups',
-          'revokeUserSession',
-          'revokeAllUserSessions',
-          'readOidcOAuthGrants',
-          'readOidcOAuthConsents',
-        ],
-        restrictEntitlements: true,
-        grantProperties: { generateDeviceFlowQRCode: 'false' },
-        token: { accessTokenType: 'jwt' },
-        consentAction: 'always_prompt',
-        requirePkceVerification: 'false',
-      },
-    },
-    applicationState: true,
-    approvalRequired: false,
-    signonState: true,
-    // No launchpad tile — humans never sign into this app interactively.
-    visibleOnLaunchpad: false,
-    customization: { themeId: 'default' },
-  };
-}
-
 // After app creation Verify defaults the Entitlements tab to "Select users and
 // groups" with no users selected -> no one can sign in. The Admin UI exposes
 // this as a radio group ("Automatic access" / "Approval required" / "Select").
@@ -658,29 +548,9 @@ async function upsertOidcApp(token: string, opts: {
   return result;
 }
 
-// Upsert the SSF app. Unlike the UI + TE apps this is a pure client_credentials
-// client — no user ever interactively signs in to it — so we skip
-// setAutomaticAccess. Returns the (clientId, clientSecret) pair if available.
-//
-// Idempotency safety (per memory/feedback_cookbook_idempotent_bootstrap_safety.md):
-// if the app already exists and Verify does not surface clientSecret on the
-// authenticated GET, we return clientSecret:undefined. The caller MUST NOT
-// then overwrite the Vault entry with an empty string.
-async function upsertSsfApp(token: string): Promise<AppResult> {
-  const existing = await findApp(token, SSF_NAME);
-  if (existing) {
-    console.log(`[verify] app ${SSF_NAME} already exists (id ${existing.id}, clientId ${existing.clientId}); leaving in place`);
-    return existing;
-  }
-  const body = buildSsfAppBody();
-  const result = await createApp(token, body);
-  console.log(`[verify] app ${SSF_NAME} created (id ${result.id}, clientId ${result.clientId})`);
-  return result;
-}
-
 // -- Rollback (delete) --------------------------------------------------------
 async function rollback(token: string) {
-  for (const name of [UI_NAME, TE_NAME, SSF_NAME]) {
+  for (const name of [UI_NAME, TE_NAME]) {
     const list = ((await api('GET', `/v1.0/applications?filter=name eq "${name}"`, token)) as { applications?: Array<{ id: string }> })?.applications || [];
     for (const a of list) await api('DELETE', `/v1.0/applications/${a.id}`, token);
   }
@@ -713,17 +583,15 @@ const teApp = await upsertOidcApp(token, {
   isTokenExchange: true,
   policyId,
 });
-const ssfApp = await upsertSsfApp(token);
 
 // verify-output.json carries non-secret identifiers + the policyId. Secrets
-// (TE + UI + SSF client_secret) live in Vault KV, written below. The smoke-test
+// (TE + UI client_secret) live in Vault KV, written below. The smoke-test
 // and the get-clinician-token script read identifiers from this file and
 // secrets from Vault, so the customer never has a plaintext secret on disk.
 const out = {
   tenantHost: TENANT,
   uiClientId: uiApp.clientId,
   teClientId: teApp.clientId,
-  ssfClientId: ssfApp.clientId,
   policyId,
   attributeName: ATTR_NAME,
 };
@@ -758,7 +626,6 @@ async function writeVaultKv(path: string, fields: Record<string, string>): Promi
 // an empty string. The guard makes re-runs of the bootstrap safe.
 let teLanded = 'env';
 let uiLanded = 'env';
-let ssfLanded = 'env';
 if (VAULT_ADDR && VAULT_TOKEN) {
   if (teApp.clientSecret) {
     if (await writeVaultKv('secret/data/VERIFY_TE_CLIENT_SECRET', { value: teApp.clientSecret })) {
@@ -776,37 +643,6 @@ if (VAULT_ADDR && VAULT_TOKEN) {
     console.log('[verify] UI clientSecret not exposed on existing-app GET; leaving Vault entry unchanged');
     uiLanded = 'vault-existing';
   }
-  // SSF app: write clientId AND clientSecret to separate Vault KV paths so
-  // configure-antenna.sh can read each via its own VAULT_SSF_CLIENT_ID_PATH /
-  // VAULT_SSF_CLIENT_SECRET_PATH env var.
-  //
-  // Idempotency safety guard (memory/feedback_cookbook_idempotent_bootstrap_safety.md):
-  // we ONLY write when we actually have non-empty values. On a re-run where
-  // the app already exists, Verify may or may not surface clientSecret on
-  // the GET. If clientSecret is missing, we DO write the clientId (it never
-  // changes after create and Verify always returns it on GET) but we leave
-  // the secret path untouched so we don't clobber a working Vault entry
-  // with an empty string.
-  if (ssfApp.clientId) {
-    if (await writeVaultKv('secret/data/SSF_CLIENT_ID', { SSF_CLIENT_ID: ssfApp.clientId })) {
-      ssfLanded = 'vault';
-    }
-  } else {
-    console.log('[verify] SSF clientId missing from response; leaving Vault entry unchanged');
-    ssfLanded = 'vault-existing';
-  }
-  if (ssfApp.clientSecret) {
-    if (await writeVaultKv('secret/data/SSF_CLIENT_SECRET', { SSF_CLIENT_SECRET: ssfApp.clientSecret })) {
-      // ssfLanded already 'vault' from above; keep
-    } else {
-      ssfLanded = 'vault-existing';
-    }
-  } else {
-    console.log('[verify] SSF clientSecret not exposed on existing-app GET; leaving Vault entry unchanged');
-    // If we DID just write the clientId fresh but couldn't write the secret,
-    // mark as partial so the operator-facing summary surfaces the gap.
-    if (ssfLanded === 'vault') ssfLanded = 'vault-existing';
-  }
 }
 const secretLanded = teLanded;   // back-compat for the printout block below
 
@@ -817,22 +653,17 @@ console.log(' Copy these into your other .env files:');
 console.log(`   VERIFY_TENANT_HOST=${TENANT}`);
 console.log(`   VERIFY_UI_CLIENT_ID=${uiApp.clientId}`);
 console.log(`   VERIFY_TE_CLIENT_ID=${teApp.clientId}`);
-console.log(`   VERIFY_SSF_CLIENT_ID=${ssfApp.clientId}`);
 console.log('');
 if ((teLanded === 'vault' || teLanded === 'vault-existing') &&
-    (uiLanded === 'vault' || uiLanded === 'vault-existing') &&
-    (ssfLanded === 'vault' || ssfLanded === 'vault-existing')) {
+    (uiLanded === 'vault' || uiLanded === 'vault-existing')) {
   console.log(' Secrets in Vault:');
   console.log('   VERIFY_TE_CLIENT_SECRET -> secret/data/VERIFY_TE_CLIENT_SECRET');
   console.log('   VERIFY_UI_CLIENT_SECRET -> secret/data/VERIFY_UI_CLIENT_SECRET');
-  console.log('   SSF_CLIENT_ID           -> secret/data/SSF_CLIENT_ID');
-  console.log('   SSF_CLIENT_SECRET       -> secret/data/SSF_CLIENT_SECRET');
   console.log('');
   console.log(' MCP server reads VERIFY_TE_CLIENT_SECRET on every Token Exchange.');
   console.log(' scripts/get-clinician-token.sh reads VERIFY_UI_CLIENT_SECRET for the');
-  console.log(' dev sign-in flow. infra/antenna/configure-antenna.sh reads the SSF');
-  console.log(' creds for the session-revocation action handler. None of these');
-  console.log(' secrets land on disk outside Vault.');
+  console.log(' dev sign-in flow. Both fetch from Vault directly; neither secret');
+  console.log(' lands on disk.');
 } else {
   console.log(' (No Vault KV write happened for some secrets. Set VAULT_ADDR + VAULT_TOKEN');
   console.log('  in this directory\'s .env to land the secrets in Vault automatically.)');
@@ -840,10 +671,6 @@ if ((teLanded === 'vault' || teLanded === 'vault-existing') &&
   console.log(' Fallback values (paste-on-demand only; never commit):');
   if (teLanded !== 'vault') console.log(`   VERIFY_TE_CLIENT_SECRET=${teApp.clientSecret}`);
   if (uiLanded !== 'vault') console.log(`   VERIFY_UI_CLIENT_SECRET=${uiApp.clientSecret}`);
-  if (ssfLanded !== 'vault') {
-    console.log(`   SSF_CLIENT_ID=${ssfApp.clientId}`);
-    console.log(`   SSF_CLIENT_SECRET=${ssfApp.clientSecret}`);
-  }
 }
 console.log('');
 console.log(' IMPORTANT: open the access policy in the Verify Admin UI, click');
