@@ -31,6 +31,55 @@ If the probe fails, the table below covers the most common causes.
 | Antenna container fails to start with `"No configuration to merge"` | A YAML file under the mounted configs dir is missing the `version: 26.03` first key | Every `.yml` file in `infra/antenna/deploying/{transmitter,receiver}/configs/` must start with `version: 26.03`. Add the line to any file that's missing it. |
 | Antenna container fails to start with `"ERROR reading directory /configs"` | Wrong mount path | `infra/docker-compose.yml` must mount the configs at `/configs` (not `/var/antenna/config`, which is what the IBM `verify-antenna-recipes` repo's docker-compose uses — that recipe has a verified bug). |
 
+## Receiver cannot reach transmitter
+
+This is the single most common failure mode and the script tries hard to surface it for you. The smoking gun looks like this:
+
+```
+[create-stream] ERROR — non-2xx response from https://localhost:9043/mgmt/v2.0/receivers/config
+
+Receiver-log diagnostic (this is the ACTUAL failure — CSICO0007E is generic):
+  Post "https://localhost:9044/streams" ... connection refused
+  (or)
+  Get "https://antenna-transmitter:9044/.well-known/ssf-configuration" ... no such host
+```
+
+The receiver responded HTTP 500 with `CSICO0007E`. That code is IBM Verify's generic "unexpected condition" — useless on its own. The actual failure is in the receiver-container logs and is **a docker network / hostname problem, not an IBM Verify problem**.
+
+`create-stream.sh` runs a **preflight check** before POSTing: it execs into the receiver container and curls the transmitter's discovery URL. If the preflight fails, the script exits with a detailed diagnostic before sending anything to Verify. If you see the post-failure diagnostic above, the preflight passed but a deeper inter-container fetch failed (the receiver fetches multiple URLs during stream-create — the discovery URL first, then the `/streams` endpoint advertised in the discovery doc).
+
+**Two specific causes that explain ~all instances of this error:**
+
+1. **`transmitter.base_url` or `transmitter.issuer` is wrong** in `infra/antenna/deploying/transmitter/configs/transmitter.yml`. Both must be the **docker-internal** hostname `https://antenna-transmitter:9044` (or `https://antenna-transmitter` for `issuer`). If they're `localhost`, the receiver fetches the discovery doc, then tries to POST to `https://localhost:9044/streams`, and "localhost" inside the receiver container is the receiver itself — connection refused. This is the cookbook's known-bad value; the templates default to the docker-internal hostname, but if anyone edited the yml by hand or set `ANTENNA_HOSTNAME=localhost` in a way that bled into the templated config, it can drift.
+2. **Docker network is broken** — the `mcpssf` network doesn't include both antenna containers, or one of them isn't joined. `docker network inspect infra_mcpssf` should show `vva-antenna-transmitter` and `vva-antenna-receiver` in its `Containers` map. If not: `docker compose up -d antenna-transmitter antenna-receiver` re-attaches them.
+
+**Diagnostic commands**:
+
+```bash
+# Does the receiver container resolve the transmitter hostname?
+docker exec vva-antenna-receiver getent hosts antenna-transmitter
+
+# Can it reach the discovery URL from inside its network namespace?
+docker exec vva-antenna-receiver curl -sk -o /dev/null -w "HTTP %{http_code}\n" \
+  https://antenna-transmitter:9044/.well-known/ssf-configuration
+
+# What URLs does the transmitter actually advertise?
+curl -sk https://localhost:9044/.well-known/ssf-configuration | python3 -m json.tool
+# Look at jwks_uri, configuration_endpoint, status_endpoint.
+# They MUST contain 'antenna-transmitter', NOT 'localhost'.
+
+# What does the receiver-side rendered config say?
+grep -E 'base_url|issuer' deploying/transmitter/configs/transmitter.yml
+```
+
+**Fix**: edit `infra/antenna/.env` and confirm `ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME=antenna-transmitter` is set, then re-template and restart:
+
+```bash
+cd infra/antenna
+./configure-antenna.sh   # re-templates yml + restarts containers
+./create-stream.sh       # retries the registration with the preflight check
+```
+
 ## The v26.03 "stream silently dead" mode (probably-doesn't-apply, but worth knowing)
 
 In the IBM Antenna v25.05 line there was a canonical failure mode named "stream silently dead." A stream registered against an old binary would persist across a binary upgrade, the new binary required fields the old stream lacked (notably `additional_properties.poll_interval_in_seconds`), and the result was an apparently-healthy stream — visible in `GET /streams`, no errors at startup — that nonetheless never delivered events. The transmitter would persist events as "unsigned" indefinitely; the action handler would never fire. Operators trying to diagnose this saw nothing in logs to suggest the stream was the problem.
