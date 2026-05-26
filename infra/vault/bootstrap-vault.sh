@@ -193,6 +193,64 @@ curl -sf -X POST \
 EOF
 echo "[bootstrap] Role ${PLUGIN_ROLE} written with 5-minute TTL."
 
+# ── 7b. Self-test: mint a probe credential, confirm Postgres role was created ─
+# The plugin's config/db storage is opaque to reads (passwords are write-only),
+# so the `vault write` success message above is NOT proof the connection actually
+# works. Worse: when config/db is missing or broken, the plugin silently returns
+# DUMMY credentials (a username + password it never actually created in Postgres)
+# and the workload then fails downstream with "role <name> does not exist" — a
+# failure pattern that's invisible to the customer until the smoke test, hours
+# of debugging later.
+#
+# Mint a probe credential here and confirm the corresponding role actually exists
+# in Postgres. If not, the plugin's connection to Postgres is broken; fail loudly
+# with a specific diagnostic instead of letting the customer hit the silent-fail
+# downstream.
+echo "[bootstrap] Self-testing the plugin: minting a probe credential + confirming Postgres role creation..."
+PROBE_CLAIMS='{"claims":{"sub":"bootstrap-self-test","jti":"bootstrap-probe-'"$(date +%s)"'","authorization_details":[{"type":"urn:smt:agent:healthcare","operationDetails":{"action":"patient_read","patient_mrn":"A0001"}}]}}'
+PROBE_RESPONSE=$(curl -sf -X POST \
+  -H "X-Vault-Token: ${VAULT_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "${PROBE_CLAIMS}" \
+  "${VAULT_ADDR}/v1/${PLUGIN_MOUNT}/creds/${PLUGIN_ROLE}" 2>&1) || {
+  echo ""
+  echo "ERROR: verify-rar plugin rejected the self-test mint." >&2
+  echo "  Response: ${PROBE_RESPONSE}" >&2
+  echo "  Common causes: role definition missing fields, claims shape wrong (this would be a plugin/bootstrap bug)." >&2
+  exit 1
+}
+PROBE_USERNAME=$(echo "${PROBE_RESPONSE}" | python3 -c "import json,sys;print(json.load(sys.stdin)['data']['username'])" 2>/dev/null)
+PROBE_LEASE=$(echo "${PROBE_RESPONSE}" | python3 -c "import json,sys;print(json.load(sys.stdin)['lease_id'])" 2>/dev/null)
+if [ -z "${PROBE_USERNAME}" ]; then
+  echo ""
+  echo "ERROR: plugin returned a malformed mint response." >&2
+  echo "  Response: ${PROBE_RESPONSE}" >&2
+  exit 1
+fi
+
+# Now check Postgres — did the plugin actually CREATE this role? If not, the
+# config/db connection is broken (most commonly: POSTGRES_HOST is unreachable
+# from inside the Vault container, or vva_admin lacks CREATE ROLE).
+EXISTS=$(docker exec vva-postgres psql -U "${POSTGRES_ADMIN_USER}" "${POSTGRES_DB}" -tAc \
+  "SELECT 1 FROM pg_roles WHERE rolname = '${PROBE_USERNAME}';" 2>&1)
+if [ "${EXISTS}" != "1" ]; then
+  echo ""
+  echo "ERROR: plugin returned credentials ${PROBE_USERNAME} but Postgres has no such role." >&2
+  echo "  This is the silent-fail mode that causes 'role does not exist' downstream." >&2
+  echo "  Likely causes:" >&2
+  echo "    1. POSTGRES_HOST=${POSTGRES_HOST} is not reachable from inside vva-vault." >&2
+  echo "       Test: docker exec vva-vault nc -zv ${POSTGRES_HOST} ${POSTGRES_PORT}" >&2
+  echo "    2. ${POSTGRES_ADMIN_USER} lacks CREATE ROLE in ${POSTGRES_DB}." >&2
+  echo "       Test: docker exec vva-postgres psql -U ${POSTGRES_ADMIN_USER} -c \"SELECT rolcreaterole FROM pg_roles WHERE rolname='${POSTGRES_ADMIN_USER}'\"" >&2
+  echo "    3. The connection_url password is wrong or the auth method (md5 vs scram) doesn't match." >&2
+  echo "  Vault logs: docker logs vva-vault --since 60s | grep -i verify-rar" >&2
+  exit 1
+fi
+# Clean up the probe credential immediately.
+curl -sf -X PUT -H "X-Vault-Token: ${VAULT_TOKEN}" -H 'Content-Type: application/json' \
+  -d "{\"lease_id\":\"${PROBE_LEASE}\"}" "${VAULT_ADDR}/v1/sys/leases/revoke" >/dev/null 2>&1 || true
+echo "[bootstrap] Self-test passed: probe role ${PROBE_USERNAME} was created and revoked successfully."
+
 # ── 8. Ensure the KV v2 secrets engine is mounted at secret/ ─────────────────
 # Vault dev mode mounts KV v2 at secret/ by default, but the explicit check
 # makes this script work against a non-dev Vault as well.
