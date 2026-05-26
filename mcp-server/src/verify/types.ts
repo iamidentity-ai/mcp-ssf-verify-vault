@@ -25,15 +25,19 @@ export interface TokenExchangeResult {
  */
 export type MfaPollResult =
   | { state: 'approved'; assertion: string }
-  | { state: 'denied'; reason: string }
+  | { state: 'denied'; reason: string }                    // user tapped "I changed my mind"
+  | { state: 'denied_suspicious'; reason: string }         // user tapped "Mark as suspicious" — stronger signal
   | { state: 'timeout' };
 
 /**
  * Thrown when the auto-driven MFA flow inside exchangeToken cannot succeed.
  * Callers can switch on .code to render a user-friendly message.
- *   mfa_no_factor: user has no userPresence push factor enrolled
- *   mfa_denied:    user tapped Deny (or the transaction was rejected)
- *   mfa_timeout:   user did not respond within MFA_POLL_TIMEOUT_MS
+ *   mfa_no_factor:        user has no userPresence push factor enrolled
+ *   mfa_denied:           user tapped "I changed my mind" (normal deny)
+ *   mfa_denied_suspicious: user tapped "Mark as suspicious" — should be
+ *                         treated as immediate threshold (1-strike kill),
+ *                         not counted as one of three regular denies
+ *   mfa_timeout:          user did not respond within MFA_POLL_TIMEOUT_MS
  *   mfa_challenge_no_token: Verify returned mfa_challenge with no access_token
  */
 export class MfaError extends Error {
@@ -41,6 +45,7 @@ export class MfaError extends Error {
     public readonly code:
       | 'mfa_no_factor'
       | 'mfa_denied'
+      | 'mfa_denied_suspicious'
       | 'mfa_timeout'
       | 'mfa_challenge_no_token',
     message: string,

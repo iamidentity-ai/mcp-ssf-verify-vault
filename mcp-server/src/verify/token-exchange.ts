@@ -120,6 +120,12 @@ export async function exchangeToken(
   if (pollResult.state === 'denied') {
     throw new MfaError('mfa_denied', `User denied push (${pollResult.reason})`);
   }
+  if (pollResult.state === 'denied_suspicious') {
+    // Stronger signal than regular deny — the user actively reported the
+    // push as suspicious activity. dispatch-wrapper treats this as an
+    // immediate-threshold (1-strike kill), not one of three regular denies.
+    throw new MfaError('mfa_denied_suspicious', `User reported push as suspicious (${pollResult.reason})`);
+  }
   if (pollResult.state === 'timeout') {
     throw new MfaError('mfa_timeout', 'User did not respond to push within timeout');
   }
@@ -273,6 +279,17 @@ export async function pollOAuthMfaStatus(
     // working poll reads validation.assertion. Accept both keys defensively.
     const data = (await res.json()) as { state?: string; assertion?: string; jwt?: string };
     const state = data.state;
+
+    // Verbose state logging — captures the exact state string Verify returns
+    // so we can identify any new states (especially "Mark as suspicious" vs
+    // "I changed my mind"). The IBM Verify mobile app's two deny buttons may
+    // return DIFFERENT state strings, and the docs don't fully enumerate them.
+    // Log only state-change transitions to keep the log tidy (the poll runs
+    // every 3s; pending state would spam otherwise).
+    if (state !== 'PENDING' && state !== undefined) {
+      console.log(`[mfa-poll] Verify returned state="${state}" for txn=${transactionUri.split('/').pop()}`);
+    }
+
     if (state === 'VERIFY_SUCCESS') {
       const assertion = data.assertion ?? data.jwt;
       if (!assertion) {
@@ -280,6 +297,25 @@ export async function pollOAuthMfaStatus(
       }
       return { state: 'approved', assertion };
     }
+
+    // SUSPICIOUS deny — user tapped "Mark as suspicious" in the IBM Verify
+    // mobile app. This is a STRONGER signal than the regular deny: the user
+    // is actively reporting unauthorized activity. The dispatch wrapper
+    // promotes this to immediate-kill (1-strike threshold) rather than
+    // treating it as one of three regular denies.
+    //
+    // IBM Verify's exact state-string for this is not fully documented; we
+    // accept the known candidate values (USER_FRAUD, FRAUD, USER_REPORTED_FRAUD,
+    // SUSPICIOUS, USER_REPORTED_SUSPICIOUS) and fall back to substring matching
+    // on "FRAUD" or "SUSPICIOUS" in any returned state. The verbose log above
+    // also captures unknown states so we can extend this list when new ones
+    // are observed in customer trials.
+    if (state === 'USER_FRAUD' || state === 'FRAUD' || state === 'USER_REPORTED_FRAUD'
+        || state === 'SUSPICIOUS' || state === 'USER_REPORTED_SUSPICIOUS'
+        || (state !== undefined && (state.includes('FRAUD') || state.includes('SUSPICIOUS')))) {
+      return { state: 'denied_suspicious', reason: state ?? 'suspicious' };
+    }
+
     if (state === 'USER_DENIED' || state === 'DENY' || state === 'FAILED' || state === 'EXPIRED') {
       return { state: 'denied', reason: state };
     }
