@@ -26,8 +26,15 @@ if [ ! -f .env ]; then
 fi
 
 # ── 1. Compose up ────────────────────────────────────────────────────────────
+# Restrict to postgres + vault. The antenna-{transmitter,receiver} services
+# defined in the same compose file MUST NOT start here — their configs
+# (transmitter.yml / receiver.yml) are not yet templated, and starting them
+# without rendered configs makes them crash-loop ("No configuration to merge").
+# Antenna brings up later via scripts/bootstrap-antenna.sh after the customer
+# has provisioned the SSF management API client (chapter 14) and Vault has
+# the SSF_CLIENT_ID + SSF_CLIENT_SECRET keys.
 echo "[bootstrap-all] Starting Postgres + Vault dev containers..."
-docker compose up -d
+docker compose up -d postgres vault
 
 # ── 2. Wait for Postgres healthcheck ─────────────────────────────────────────
 echo -n "[bootstrap-all] Waiting for Postgres "
