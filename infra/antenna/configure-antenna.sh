@@ -41,8 +41,29 @@ fetch_kv() {
   # Covers customers who set the var as `secret/data/X` (canonical) or `secret/X`.
   local clean_path=${path#secret/data/}
   clean_path=${clean_path#secret/}
-  curl -sf -H "X-Vault-Token: ${VAULT_TOKEN}" "${VAULT_ADDR}/v1/secret/data/${clean_path}" \
-    | python3 -c "import json,sys;print(json.load(sys.stdin)['data']['data'].get('${field}',''))"
+  # Capture body + HTTP status separately. curl -sf swallows the body on
+  # non-2xx, which used to give us empty stdin → python3 traceback. With
+  # -s -w "%{http_code}" we get both; we tee status to a separate fd to keep
+  # this single-command-friendly. Python parses defensively (empty stdin or
+  # malformed JSON returns the empty string instead of crashing).
+  local body http_code response
+  response=$(curl -s -w "\n%{http_code}" -H "X-Vault-Token: ${VAULT_TOKEN}" \
+    "${VAULT_ADDR}/v1/secret/data/${clean_path}")
+  http_code=$(echo "$response" | tail -n1)
+  body=$(echo "$response" | sed '$d')
+  if [[ "$http_code" != "200" ]]; then
+    # Common: 403 (wrong VAULT_TOKEN), 404 (path doesn't exist). Stay silent
+    # here; the caller's empty-string check surfaces the user-facing error.
+    return 0
+  fi
+  echo "$body" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data.get('data', {}).get('data', {}).get('${field}', ''))
+except (json.JSONDecodeError, KeyError, TypeError):
+    print('')
+"
 }
 
 CID=$(fetch_kv "${VAULT_SSF_CLIENT_ID_PATH}" SSF_CLIENT_ID || echo "")
@@ -53,9 +74,23 @@ CSEC=$(fetch_kv "${VAULT_SSF_CLIENT_SECRET_PATH}" SSF_CLIENT_SECRET || echo "")
 # create-stream.sh would POST a stream with clientId="" / clientSecret="" and
 # the receiver would silently fail to mint a token at poll time.
 if [[ -z "$CID" || -z "$CSEC" ]]; then
-  echo "ERROR: Vault returned empty SSF creds — did infra/verify/bootstrap-verify.ts run successfully?" >&2
-  echo "  Path tried: ${VAULT_SSF_CLIENT_ID_PATH} / ${VAULT_SSF_CLIENT_SECRET_PATH}" >&2
-  echo "  Confirm with: curl -H \"X-Vault-Token: \$VAULT_TOKEN\" \$VAULT_ADDR/v1/${VAULT_SSF_CLIENT_ID_PATH}" >&2
+  echo "ERROR: Vault returned empty SSF creds at ${VAULT_SSF_CLIENT_ID_PATH} / ${VAULT_SSF_CLIENT_SECRET_PATH}" >&2
+  echo "" >&2
+  echo "Two most common causes:" >&2
+  echo "  1. VAULT_TOKEN in infra/antenna/.env is wrong. The dev-mode default" >&2
+  echo "     is 'vva-dev-root-token' (NOT 'root'). Verify:" >&2
+  echo "       docker exec -e VAULT_TOKEN=vva-dev-root-token vva-vault \\\\" >&2
+  echo "         vault kv get -field=SSF_CLIENT_ID secret/SSF_CLIENT_ID" >&2
+  echo "" >&2
+  echo "  2. You have not created the SSF management API client yet (chapter 14" >&2
+  echo "     step 1). Verify Admin UI -> Security -> API -> Create API client" >&2
+  echo "     named 'mcp-ssf-shared-signals' with five entitlements, then:" >&2
+  echo "       docker exec -e VAULT_TOKEN=vva-dev-root-token vva-vault \\\\" >&2
+  echo "         vault kv put secret/SSF_CLIENT_ID SSF_CLIENT_ID=<paste>" >&2
+  echo "       docker exec -e VAULT_TOKEN=vva-dev-root-token vva-vault \\\\" >&2
+  echo "         vault kv put secret/SSF_CLIENT_SECRET SSF_CLIENT_SECRET=<paste>" >&2
+  echo "" >&2
+  echo "See docs/ssf-setup.md chapter 14 for the full walkthrough." >&2
   exit 1
 fi
 
