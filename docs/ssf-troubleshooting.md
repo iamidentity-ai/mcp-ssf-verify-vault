@@ -31,6 +31,24 @@ If the probe fails, the table below covers the most common causes.
 | Antenna container fails to start with `"No configuration to merge"` | A YAML file under the mounted configs dir is missing the `version: 26.03` first key | Every `.yml` file in `infra/antenna/deploying/{transmitter,receiver}/configs/` must start with `version: 26.03`. Add the line to any file that's missing it. |
 | Antenna container fails to start with `"ERROR reading directory /configs"` | Wrong mount path | `infra/docker-compose.yml` must mount the configs at `/configs` (not `/var/antenna/config`, which is what the IBM `verify-antenna-recipes` repo's docker-compose uses — that recipe has a verified bug). |
 
+## Two MFA-deny paths — "I changed my mind" vs "Mark as suspicious"
+
+The IBM Verify mobile app's push notification has two deny buttons, and the cookbook treats them differently:
+
+| Tap | Verify state (returned by `pollOAuthMfaStatus`) | MCP server error code | Threshold behavior |
+|---|---|---|---|
+| "I changed my mind" | `USER_DENIED` | `mfa_denied` | Counts toward the 3-strike threshold |
+| "Mark as suspicious" | `USER_FRAUDULENT` | `mfa_denied_suspicious` | **Immediate kill on first occurrence** — emits CAEP `session-revoked` without waiting for the counter to fill |
+
+The MCP server logs the EXACT state Verify returns, so any future state-string change is visible:
+
+```
+[mfa-poll] Verify returned state="USER_DENIED" for txn=<txn-id>
+[mfa-poll] Verify returned state="USER_FRAUDULENT" for txn=<txn-id>
+```
+
+If you see a different state for either tap (e.g. `USER_REPORTED_FRAUD`, `SUSPICIOUS`), update the explicit match list in `mcp-server/src/verify/token-exchange.ts::pollOAuthMfaStatus` (the substring fallback for `FRAUD` / `SUSPICIOUS` should catch most variants).
+
 ## MCP tool calls fail with `role "v-healthcare-records-..." does not exist` (Postgres code 28000)
 
 The verify-rar plugin successfully minted a credential — the username + password came back — but Postgres can't authenticate as that user. **Almost always the MCP server's `POSTGRES_PORT` is wrong** and it's connecting to a DIFFERENT Postgres than `vva-postgres` (the one the plugin actually created the role in).

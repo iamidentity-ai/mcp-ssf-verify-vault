@@ -304,13 +304,17 @@ export async function pollOAuthMfaStatus(
     // promotes this to immediate-kill (1-strike threshold) rather than
     // treating it as one of three regular denies.
     //
-    // IBM Verify's exact state-string for this is not fully documented; we
-    // accept the known candidate values (USER_FRAUD, FRAUD, USER_REPORTED_FRAUD,
-    // SUSPICIOUS, USER_REPORTED_SUSPICIOUS) and fall back to substring matching
-    // on "FRAUD" or "SUSPICIOUS" in any returned state. The verbose log above
-    // also captures unknown states so we can extend this list when new ones
-    // are observed in customer trials.
-    if (state === 'USER_FRAUD' || state === 'FRAUD' || state === 'USER_REPORTED_FRAUD'
+    // CANONICAL state strings (verified empirically against the IBM Verify
+    // mobile app, May 2026):
+    //   "USER_DENIED"     — "I changed my mind" button (regular deny)
+    //   "USER_FRAUDULENT" — "Mark as suspicious" button (suspicious deny)
+    //
+    // The other listed values + substring fallback are defensive in case the
+    // mobile app's strings change (e.g. spelled "USER_REPORTED_FRAUD" in a
+    // future release). The verbose log above captures unknown states so this
+    // list can be extended when new ones surface in customer trials.
+    if (state === 'USER_FRAUDULENT'
+        || state === 'USER_FRAUD' || state === 'FRAUD' || state === 'USER_REPORTED_FRAUD'
         || state === 'SUSPICIOUS' || state === 'USER_REPORTED_SUSPICIOUS'
         || (state !== undefined && (state.includes('FRAUD') || state.includes('SUSPICIOUS')))) {
       return { state: 'denied_suspicious', reason: state ?? 'suspicious' };
