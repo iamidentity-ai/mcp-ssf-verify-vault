@@ -20,12 +20,18 @@
 // it as a JWT SET and queues it for receiver poll.
 //
 // The `eventStr` global is the body of the POST to /sources/mcp/events. The
-// `outputData` global is the return channel back to the antenna runtime.
+// `outputData` variable MUST be declared at module scope by this script (the
+// v26.03 JS engine does NOT inject it as a global); the runtime reads it back
+// after main() returns. The v25.05 engine DID inject `outputData` as a global —
+// scripts ported from v25.05 that omit the `let outputData = {};` declaration
+// fail at runtime with "ReferenceError: outputData is not defined".
 //
-// Reference (canonical pass-through pattern): /tmp/verify-antenna-recipes/recipes/vip/transmitter/configs/js/vip_event_mapper.js
-//   (the VIP mapper transforms; ours doesn't need to because the MCP already shapes events correctly)
+// Reference (canonical v26.03 pattern, including the let outputData line):
+//   /tmp/verify-antenna-recipes/recipes/vip/transmitter/configs/js/vip_event_mapper.js
 
 importClass(logger);
+
+let outputData = {};
 
 function main() {
     var rawEvent = JSON.parse(eventStr);

@@ -51,19 +51,34 @@ curl -sk -X POST -H "Content-Type: application/json" -w "\n[probe] ingester stat
     }
   }" "$INGESTER"
 
-echo "[probe] waiting up to 75s for the receiver to action the event…"
-for i in $(seq 1 15); do
+echo "[probe] waiting up to 180s for the receiver to action the event…"
+echo "[probe]   (first run after container start takes 60-90s for the partitioner to warm up,"
+echo "[probe]    plus the 30s receiver poll interval — subsequent probes are much faster)"
+for i in $(seq 1 36); do
   sleep 5
-  # The action handler logs "session_revoked action completed successfully" on
-  # the happy path (and "All sessions revoked" on the inner deleteSessions
-  # log line). Either is a pass — match both.
-  if docker logs vva-antenna-receiver --since 90s 2>&1 | grep -q "session_revoked action completed successfully\|All sessions revoked"; then
+  # Pipeline-health proof, ordered strongest to weakest:
+  #   1. "All sessions revoked" — full happy path, real user, sessions actually revoked
+  #   2. "session_revoked action completed successfully" — handler ran to its end-log
+  #   3. "[fetchUser] No user found on tenant" — handler ran + reached Verify SCIM,
+  #      user-not-found is the expected outcome for the probe's PROBE_USER_DO_NOT_USE.
+  #      This is conclusive proof that the WHOLE chain (transmitter → SET signing →
+  #      receiver → action handler → Verify SCIM) is healthy. For a real demo the
+  #      user exists and outcome #1 fires instead.
+  RECEIVER_LOG=$(docker logs vva-antenna-receiver --since 200s 2>&1)
+  if echo "$RECEIVER_LOG" | grep -q "All sessions revoked\|session_revoked action completed successfully"; then
+    echo "[probe] PASS — full happy path ($((i*5))s) — sessions actually revoked on tenant"
+    exit 0
+  elif echo "$RECEIVER_LOG" | grep -q "\[fetchUser\] No user found on tenant"; then
     echo "[probe] PASS — pipeline is healthy ($((i*5))s)"
+    echo "[probe]   The action handler ran end-to-end and reached the Verify SCIM API."
+    echo "[probe]   No actual session was revoked because PROBE_USER_DO_NOT_USE doesn't"
+    echo "[probe]   exist on your tenant — that's the EXPECTED outcome for the probe."
+    echo "[probe]   For a real demo, use scripts/smoke-test-ssf.sh with a clinician token."
     exit 0
   fi
 done
 
-echo "[probe] FAIL — receiver did not complete the action within 75s"
+echo "[probe] FAIL — receiver did not action the event within 180s"
 echo "[probe] last 40 receiver log lines:"
 docker logs vva-antenna-receiver --tail 40
 echo ""

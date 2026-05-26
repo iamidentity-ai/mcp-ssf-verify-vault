@@ -81,6 +81,16 @@ function fetchUser(token) {
     }
 
     let userResponse = JSON.parse(result.body);
+    // Defensive: SCIM responds 200 with totalResults=0 when the user doesn't
+    // exist on the tenant. Reading .Resources[0].id then throws
+    // "TypeError: Cannot read properties of undefined (reading 'id')" which
+    // surfaces as an action-handler failure. Return null instead — the caller
+    // logs + skips the revocation. This is the normal path for synthetic-probe.sh
+    // events (where verifyUserId=PROBE_USER_DO_NOT_USE / email=probe@example.com).
+    if (!userResponse.Resources || userResponse.Resources.length === 0) {
+        logger.info(`[fetchUser] No user found on tenant for email=${SETPayload.sub_id.email} (totalResults=${userResponse.totalResults}); skipping revocation`);
+        return null;
+    }
     let userId = userResponse.Resources[0].id;
     debugLog(`[fetchUser] userId=${userId}`)
     return userId;
