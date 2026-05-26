@@ -35,6 +35,11 @@ source .env
 : "${VAULT_SSF_CLIENT_ID_PATH:?VAULT_SSF_CLIENT_ID_PATH required in infra/antenna/.env}"
 : "${VAULT_SSF_CLIENT_SECRET_PATH:?VAULT_SSF_CLIENT_SECRET_PATH required in infra/antenna/.env}"
 
+# Docker-internal hostname of the transmitter container — used in the URLs the
+# transmitter advertises in its /.well-known/ssf-configuration. Defaulted; only
+# override if you renamed the container in docker-compose.yml.
+ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME="${ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME:-antenna-transmitter}"
+
 fetch_kv() {
   local path=$1 field=$2
   # Strip optional "secret/data/" or "secret/" prefix and re-add the v2 KV path.
@@ -99,6 +104,7 @@ render() {
   sed -e "s|__SSF_CLIENT_ID__|${CID}|g" \
       -e "s|__SSF_CLIENT_SECRET__|${CSEC}|g" \
       -e "s|__ANTENNA_HOSTNAME__|${ANTENNA_HOSTNAME}|g" \
+      -e "s|__ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME__|${ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME}|g" \
       -e "s|__VERIFY_TENANT_HOSTNAME__|${VERIFY_TENANT_HOSTNAME}|g" \
       "$tpl" > "$out"
   echo "wrote $out"

@@ -2,10 +2,11 @@
 # IBM Verify Antenna v26.03 — Transmitter configuration template (mcp-ssf-verify-vault cookbook)
 #
 # Templated tokens (replaced by infra/antenna/scripts/configure-antenna.sh at deploy time):
-#   __ANTENNA_HOSTNAME__           — customer-facing hostname (TLS SAN, also embedded in base_url + issuer)
-#   __VERIFY_TENANT_HOSTNAME__     — IBM Verify tenant hostname (no scheme)
-#   __SSF_CLIENT_ID__              — clientId of the "mcp-ssf-shared-signals" API client on the tenant
-#   __SSF_CLIENT_SECRET__          — its secret
+#   __ANTENNA_HOSTNAME__                       — customer-facing hostname (TLS SAN; ingester URL the host-side MCP server hits)
+#   __ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME__  — docker-internal hostname (the receiver consumes this when fetching ssf-configuration + streams + jwks)
+#   __VERIFY_TENANT_HOSTNAME__                 — IBM Verify tenant hostname (no scheme)
+#   __SSF_CLIENT_ID__                          — clientId of the "mcp-ssf-shared-signals" API client on the tenant
+#   __SSF_CLIENT_SECRET__                      — its secret
 #
 # Schema reference: /tmp/verify-antenna-recipes/config/ibm-verify-antenna-config-ref.md
 # Canonical recipe: /tmp/verify-antenna-recipes/deploying/transmitter/container-runtime/configs/transmitter.yml
@@ -29,13 +30,18 @@ transmitter:
       key: "ks:server/key"
       certificate: "ks:server/cert"
 
-  # Base URL the receiver discovers via /.well-known/ssf-configuration. Must be a
-  # hostname the receiver can reach (in docker-compose: antenna-transmitter:9044;
-  # externally: __ANTENNA_HOSTNAME__:9044).
-  base_url: "https://__ANTENNA_HOSTNAME__:9044"
+  # Base URL the receiver discovers via /.well-known/ssf-configuration. The transmitter
+  # ADVERTISES this in the discovery doc + uses it as the base for `jwks_uri`,
+  # `configuration_endpoint` (/streams), `status_endpoint`, `subject-add`, etc.
+  # The receiver fetches THOSE URLs from INSIDE its container — so "localhost"
+  # is wrong (it resolves to the receiver itself, not the transmitter). Must be
+  # the docker-internal hostname of the transmitter container.
+  base_url: "https://__ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME__:9044"
 
   # Issuer claim on the signed SET tokens. Convention is the base hostname (no port).
-  issuer: "https://__ANTENNA_HOSTNAME__"
+  # Same hostname-context reasoning as base_url — the receiver validates this against
+  # the JWT's iss claim, and the JWT signer in the transmitter sets it from here.
+  issuer: "https://__ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME__"
 
   # ALL existing subjects auto-added to new streams (vs NONE = receiver must
   # explicitly add subjects via the subject management API). For the cookbook
@@ -73,6 +79,9 @@ transmitter:
     sources:
       # Source id 'mcp' is referenced by the MCP server's ANTENNA_SOURCE_URL
       # (mcp-server/.env): https://__ANTENNA_HOSTNAME__:9044/sources/mcp/events
+      # The MCP server is on the HOST, not in the docker network — so this URL
+      # uses the host-facing hostname (localhost in local dev). NOT the same as
+      # base_url above, which is consumed by the receiver from inside its container.
       # The transform is a pure pass-through — the MCP emits already-canonical
       # CAEP JSON (sub_id + events object), so the mapper just forwards.
       - id: mcp
