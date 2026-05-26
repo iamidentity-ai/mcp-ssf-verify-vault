@@ -31,6 +31,47 @@ If the probe fails, the table below covers the most common causes.
 | Antenna container fails to start with `"No configuration to merge"` | A YAML file under the mounted configs dir is missing the `version: 26.03` first key | Every `.yml` file in `infra/antenna/deploying/{transmitter,receiver}/configs/` must start with `version: 26.03`. Add the line to any file that's missing it. |
 | Antenna container fails to start with `"ERROR reading directory /configs"` | Wrong mount path | `infra/docker-compose.yml` must mount the configs at `/configs` (not `/var/antenna/config`, which is what the IBM `verify-antenna-recipes` repo's docker-compose uses — that recipe has a verified bug). |
 
+## MCP tool calls fail with `role "v-healthcare-records-..." does not exist` (Postgres code 28000)
+
+The verify-rar plugin successfully minted a credential — the username + password came back — but Postgres can't authenticate as that user. **Almost always the MCP server's `POSTGRES_PORT` is wrong** and it's connecting to a DIFFERENT Postgres than `vva-postgres` (the one the plugin actually created the role in).
+
+The cookbook's `infra/docker-compose.yml` maps the Postgres container's internal `5432` to the host's `15432` (so it doesn't collide with a system Postgres on the standard port). Two perspectives matter:
+
+- **Vault container** reaches Postgres at `postgres:5432` (docker-network hostname, container-internal port). This is what `verify-rar/config/db`'s `connection_url` uses; the plugin's CREATE ROLE goes here.
+- **MCP server** (running on the host) reaches Postgres at `localhost:15432`. This is what `mcp-server/.env`'s `POSTGRES_HOST` + `POSTGRES_PORT` must be.
+
+If `mcp-server/.env` says `POSTGRES_PORT=5432`, the MCP server is talking to whatever else is on host:5432 (system Postgres, another container, nothing) — NOT vva-postgres. The plugin's roles aren't there, so authentication fails.
+
+**Fix**:
+
+```bash
+sed -i '' 's/^POSTGRES_PORT=5432/POSTGRES_PORT=15432/' mcp-server/.env
+# Restart the MCP server (Ctrl-C + npm run dev)
+```
+
+**Diagnostic that uniquely identifies this**: the v-* role DOES exist in vva-postgres immediately after a mint:
+
+```bash
+# 1. Mint a probe credential via the plugin
+docker exec -e VAULT_TOKEN=vva-dev-root-token vva-vault sh -c 'cat > /tmp/c.json <<EOF
+{"claims":{"sub":"t","jti":"t","authorization_details":[{"type":"urn:smt:agent:healthcare","operationDetails":{"action":"patient_read","patient_mrn":"A0001"}}]}}
+EOF
+vault write -format=json verify-rar/creds/healthcare-records @/tmp/c.json' \
+  | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['data']['username'])"
+# Output: v-healthcare-records-<hex>
+
+# 2. Confirm THAT role IS in vva-postgres on port 15432 (host-mapped):
+PGPASSWORD=any psql "postgresql://v-healthcare-records-<hex>@localhost:15432/healthcare?sslmode=disable" \
+  -c "SELECT current_user;"
+# This will fail-on-password but the error tells you the role exists.
+
+# 3. Confirm the SAME role is NOT on host port 5432 (the "wrong Postgres"):
+PGPASSWORD=any psql "postgresql://v-healthcare-records-<hex>@localhost:5432/healthcare?sslmode=disable" \
+  -c "SELECT current_user;"
+# Output: FATAL: role "v-healthcare-records-<hex>" does not exist
+# That's the exact error the smoke test sees — confirms wrong-port theory.
+```
+
 ## Receiver cannot reach transmitter
 
 This is the single most common failure mode and the script tries hard to surface it for you. The smoking gun looks like this:
