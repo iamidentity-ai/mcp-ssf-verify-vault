@@ -25,6 +25,15 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
+# Auto-source infra/.env so the customer doesn't have to `export VERIFY_TENANT_HOST=...`
+# in their shell before running this script. The .env already has the canonical
+# value (set during chapter 5); this just lifts it into the script's environment.
+# `set -a` exports every assignment, `set +a` turns auto-export back off.
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
 # ── 1. Compose up ────────────────────────────────────────────────────────────
 # Restrict to postgres + vault. The antenna-{transmitter,receiver} services
 # defined in the same compose file MUST NOT start here — their configs
