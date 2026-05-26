@@ -47,14 +47,25 @@ if [[ -z "$CID" || -z "$CSEC" ]]; then
   exit 1
 fi
 
+# The script (running on the HOST) talks to the receiver via host-side localhost:9043.
 RECEIVER_MGMT="https://${ANTENNA_HOSTNAME}:${ANTENNA_RECEIVER_PORT}/mgmt/v2.0/receivers/config"
-TRANSMITTER_METADATA="https://${ANTENNA_HOSTNAME}:${ANTENNA_TRANSMITTER_PORT}/.well-known/ssf-configuration"
+
+# CRITICAL: the metadataUrl gets stored in the receiver and fetched by the receiver
+# AT POLL TIME from INSIDE its container. "localhost" inside a container means the
+# container itself, not the host — so the host-facing hostname is wrong here.
+# Use the docker-internal hostname of the transmitter container (matches the
+# `hostname:` field in infra/docker-compose.yml). Customer can override via the
+# ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME env var if they deploy on a non-default
+# network or change container names.
+TRANSMITTER_INTERNAL_HOST="${ANTENNA_TRANSMITTER_INTERNAL_HOSTNAME:-antenna-transmitter}"
+TRANSMITTER_METADATA="https://${TRANSMITTER_INTERNAL_HOST}:${ANTENNA_TRANSMITTER_PORT}/.well-known/ssf-configuration"
 
 # Idempotency check — GET existing streams; if one matches our transmitter,
 # exit 0. The v2 mgmt GET returns the current receiver config (list of
-# subscribed transmitters); a substring match on our transmitter port suffices.
+# subscribed transmitters); a substring match on the docker-internal hostname
+# is the right key to look for (that's what we just stored).
 if existing=$(curl -sk "$RECEIVER_MGMT" 2>/dev/null); then
-  if echo "$existing" | grep -q "${ANTENNA_HOSTNAME}:${ANTENNA_TRANSMITTER_PORT}"; then
+  if echo "$existing" | grep -q "${TRANSMITTER_INTERNAL_HOST}:${ANTENNA_TRANSMITTER_PORT}"; then
     echo "[create-stream] stream already exists for ${TRANSMITTER_METADATA} — skipping"
     exit 0
   fi
